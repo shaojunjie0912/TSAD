@@ -1,11 +1,13 @@
-from typing import Optional, Tuple
+from typing import List, Literal, Optional, Tuple
 
+import ptwt
 import torch
 import torch.nn as nn
 
 from ..layers.channel_mask import ChannelMaskGenerator
 from ..layers.channel_masked_transformer import ChannelMaskedTransformer
 from ..layers.flatten_head import FlattenHead
+from ..layers.patcher import FftPatcher
 
 #
 from ..layers.RevIN import RevIN
@@ -67,8 +69,13 @@ class CATCH(nn.Module):
         # TODO: patch_size 和 patch_stride 目前都是固定的
         self.patch_size = patch_size
         self.patch_stride = patch_stride
-        patch_num = int((seq_len - patch_size) / patch_stride + 1)
+        self.patch_num = int((seq_len - patch_size) / patch_stride + 1)
         self.norm = nn.LayerNorm(self.patch_size)
+
+        # self.patcher = FftPatcher(patch_size=patch_size, patch_stride=patch_stride)
+        self.patcher = WaveletPatcher(
+            wave="db4", J=3, mode="symmetric", patch_size=patch_size, patch_stride=patch_stride
+        )
 
         # Backbone
         self.re_attn = True
@@ -91,14 +98,14 @@ class CATCH(nn.Module):
         self.flatten_head_real = FlattenHead(
             individual=flatten_individual,
             num_features=num_features,
-            input_dim=d_model * 2 * patch_num,
+            input_dim=d_model * 2 * self.patch_num,
             seq_len=seq_len,
             head_dropout=head_dropout,
         )
         self.flatten_head_imag = FlattenHead(
             individual=flatten_individual,
             num_features=num_features,
-            input_dim=d_model * 2 * patch_num,
+            input_dim=d_model * 2 * self.patch_num,
             seq_len=seq_len,
             head_dropout=head_dropout,
         )
@@ -120,43 +127,16 @@ class CATCH(nn.Module):
         Returns:
             Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]: [时域重构结果, 频域重构结果, 动态对比损失]
         """
+        batch_size = x.shape[0]
+        num_features = x.shape[2]
         # ---------------------------------------------
         # ---------------- 前向模块 (FM) -------------------
         # ---------------------------------------------
         # 实例归一化
         x = self.revin_layer(x, "norm")
 
-        # 傅里叶变换 FFT
-        x = x.permute(0, 2, 1)  # 维度重排 (batch_size, num_features, seq_len) (B, C, T)
-        z = torch.fft.fft(x)  # 默认维度 -1(最后一个), 即对 seq_len 个时间步进行傅里叶变换
-        z_real = z.real  # 实部
-        z_imag = z.imag  # 虚部
-
-        # 频域切片(patching) -> 频带(frequency patches)
-        # 分别在实部和虚部的最后一个维度(频率)上进行切片(滑窗)
-        # (batch_size, num_features, seq_len)
-        #                  ↓
-        # (batch_size, num_features, patch_num, patch_size)
-        # unfold 滑窗, 当 (seq_len - patch_size) % patch_stride == 0 时, 能覆盖所有数据
-        z_real = z_real.unfold(dimension=-1, size=self.patch_size, step=self.patch_stride)
-        z_imag = z_imag.unfold(dimension=-1, size=self.patch_size, step=self.patch_stride)
-
-        # 维度重排 (batch_size, patch_num, num_features, patch_size)
-        z_real = z_real.permute(0, 2, 1, 3)
-        z_imag = z_imag.permute(0, 2, 1, 3)
-
-        batch_size = z_real.shape[0]
-        patch_num = z_real.shape[1]
-        num_features = z_real.shape[2]
-        patch_size = z_real.shape[3]
-
-        # 形状变换 (batch_size * patch_num, num_features, patch_size)
-        z_real = z_real.reshape(batch_size * patch_num, num_features, patch_size)
-        z_imag = z_imag.reshape(batch_size * patch_num, num_features, patch_size)
-
-        # 拼接实部和虚部 [实部, 虚部] NOTE: 并非实虚交错 TODO: 真的存在数学原理吗?
-        # z_cat: (batch_size * patch_num, num_features, patch_size * 2)
-        z_cat = torch.cat((z_real, z_imag), dim=-1)
+        # 傅里叶变换 -> patching
+        z_cat = self.patcher(x)
 
         # ------------------------------------------------------
         # ---------------- 通道融合模块 (CFM) -------------------
@@ -172,8 +152,12 @@ class CATCH(nn.Module):
         z_hat_real = self.get_real(z_hat)  # (batch_size * patch_num, num_features, d_model * 2)
         z_hat_imag = self.get_imag(z_hat)  # (batch_size * patch_num, num_features, d_model * 2)
 
-        z_hat_real = z_hat_real.reshape((batch_size, patch_num, num_features, z_hat_real.shape[-1]))
-        z_hat_imag = z_hat_imag.reshape((batch_size, patch_num, num_features, z_hat_imag.shape[-1]))
+        z_hat_real = z_hat_real.reshape(
+            (batch_size, self.patch_num, num_features, z_hat_real.shape[-1])
+        )
+        z_hat_imag = z_hat_imag.reshape(
+            (batch_size, self.patch_num, num_features, z_hat_imag.shape[-1])
+        )
 
         # z1: [bs, nvars， patch_num, horizon] TODO: horizon?
         # 维度重排 (batch_size, num_features, patch_num, d_model * 2)
