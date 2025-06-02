@@ -127,8 +127,8 @@ class CATCH(nn.Module):
         Returns:
             Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]: [时域重构结果, 频域重构结果, 动态对比损失]
         """
-        batch_size = x.shape[0]
-        num_features = x.shape[2]
+        batch_size = x.size(0)
+        num_features = x.size(2)
         # ---------------------------------------------
         # ---------------- 前向模块 (FM) -------------------
         # ---------------------------------------------
