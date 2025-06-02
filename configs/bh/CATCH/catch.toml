@@ -1,0 +1,66 @@
+[model]
+# 模型架构核心参数
+num_layers = 3             # Transformer 编码器层数
+d_cf = 64                  # 内部特征维度(cf: channel-frequency), Transformer 编码器处理特征的维度(嵌入维度?)
+d_model = 128              # 输出维度 configs.d_model * 2 (通常是模型维度的两倍, 因为处理复数表示)
+num_heads = 2              # 多头注意力头数
+d_head = 64                # 注意力头维度
+d_ff = 256                 # 前馈网络的隐藏层维度
+flatten_individual = false # 是否为每个通道使用独立处理网络
+
+
+[model.regularization]
+# 正则化参数
+dropout = 0.2        # Transformer dropout 率
+head_dropout = 0.1   # 解码器头部 dropout 率
+regular_lambda = 0.5 # 对比损失正则化系数
+temperature = 0.07   # 对比学习温度参数
+
+[training]
+batch_size = 32              # 批量大小
+num_epochs = 30              # 训练轮次
+learning_rate = 0.0001       # 主学习率
+mask_learning_rate = 0.00001 # 掩码生成器的学习率
+patience = 3                 # 早停策略的耐心值
+pct_start = 0.3              # 学习率预热比例
+lr_adj = "type1"             # 学习率调整策略
+
+
+[data]
+# 数据处理参数
+# NOTE: (seq_len - patch_size) % patch_stride == 0 确保覆盖 window 中所有数据
+seq_len = 16               # 滑窗大小 (即 window_size) (时域 -> 频域)
+patch_size = 4             # 滑窗内 patch 大小 (将 seq_len 长度的 window 再分成 patch_size 大小的块, )
+patch_stride = 2           # 滑窗内 patch 步长
+inference_patch_size = 8   # 推理阶段分块大小 (频域)
+inference_patch_stride = 1 # 推理阶段分块滑动步长 (频域)
+
+[data.normalization]
+# 归一化参数
+affine = false        # RevIN affine参数
+subtract_last = false # RevIN 减去最后值
+
+
+[loss]
+dc_lambda = 0.005              # 动态对比损失权重
+loss_type = "MAE"              # 辅助损失类型
+complex_error_type = "complex" # 辅助损失应用类型
+fft_mode = "fft"               # 频域变换模式
+freq_loss_mask = false         # 是否对频域损失计算使用掩码
+freq_loss_lambda = 0.005       # 频域辅助损失权重
+module_first = true            # 复数误差的处理顺序
+
+[anomaly_detection]
+freq_score_lambda = 0.05 # 评分函数中频域分数权重
+anomaly_ratio = [ # 异常检测阈值比例列表
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0,
+    6.0,
+    7.0,
+    8.0,
+    9.0,
+    10.0,
+]
