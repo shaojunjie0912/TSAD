@@ -4,6 +4,8 @@ import ptwt
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from ptwt import Wavelet as PyWavelet  # 用于获取滤波器长度等属性
+from pywt import dwt_coeff_len as pywt_dwt_coeff_len  # 用于长度计算
 
 
 class MultiLevelWaveletPatcher(nn.Module):
@@ -47,7 +49,7 @@ class MultiLevelWaveletPatcher(nn.Module):
             Tuple[torch.Tensor, int]: 填充后的序列和填充长度
         """
         seq_len = x.size(-1)
-        pow2 = 1 << self.level  # 2^level
+        pow2 = 2**self.level  # 2^level
         pad_len = (pow2 - seq_len % pow2) % pow2
         if pad_len > 0:
             x = F.pad(x, (0, pad_len))  # F.pad 在最后一维右侧补 0： (left, right)
@@ -69,17 +71,18 @@ class MultiLevelWaveletPatcher(nn.Module):
             torch.Tensor: 上采样后的系数
         """
         upsampled = []
-        # coeffs[0] = cA_L,  coeffs[1] = cD_L, ..., coeffs[-1] = cD_1
+        # cA_L, cD_L, cD_{L-1}, ..., cD_1
         for k, c in enumerate(coeffs):
-            # k == 0  → cA_L
-            # k >= 1  → cD_{level+1-k}
-            factor = 1 << (self.level if k == 0 else self.level - k)
-            # (B, C, T_small) → repeat → (B, C, T_small*factor)
-            c_up = c.repeat_interleave(factor, dim=-1)
-            # 裁到 target_len（repeat 可能会多出 1-factor 处）
-            c_up = c_up[..., :target_len]
+            if k == 0:  # cA_L 近似系数
+                factor = 2**self.level
+            else:  # cD_{level + 1 - k} 细节系数
+                factor = 2 ** (self.level - k + 1)
+
+            # (B, C, T_small) -> repeat -> (B, C, T_small * factor)
+            c_up = c.repeat_interleave(repeats=factor, dim=-1)
+            c_up = c_up[..., :target_len]  # 裁到 target_len
             upsampled.append(c_up)
-        # 在“通道维” stack → (B, C*(level+1), T)
+        # 在通道维度 stack -> (B, C * (level + 1), T)
         return torch.cat(upsampled, dim=1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -98,13 +101,12 @@ class MultiLevelWaveletPatcher(nn.Module):
         x, pad_len = self._pad_to_pow2(x)  #  (B, C, T_padded)
         T_padded = x.size(-1)
 
-        # 3) 多层 DWT
-        #    coeffs = [cA_L, cD_L, ..., cD_1]
+        # 多层 DWT: coeffs = [cA_L, cD_L, ..., cD_1]
         coeffs = ptwt.wavedec(
             x, wavelet=self.wavelet, level=self.level, mode=self.mode  # type:ignore
         )
 
-        # 4) ↑ Upsample 到原 T_padded, 然后在通道维 concat
+        # 上采样及通道维 stack
         #    stacked: (B, C*(level+1), T_padded)
         stacked = self._upsample_coeffs(coeffs, T_padded)
 
@@ -112,20 +114,17 @@ class MultiLevelWaveletPatcher(nn.Module):
         if pad_len > 0:
             stacked = stacked[..., :-pad_len]
 
-        # 6) 频域 patching  —— 在 -1 维滑窗
-        #    (B, C', T) → (B, C', patch_num, patch_size)
-        stacked = stacked.unfold(
-            dimension=-1, size=self.patch_size, step=self.patch_stride
-        )  #  (B, C', patch_num, patch_size)
+        # 频域 patching
+        # (B, C', T) -> (B, C', patch_num, patch_size)
+        stacked = stacked.unfold(dimension=-1, size=self.patch_size, step=self.patch_stride)
 
-        # 7) 维度重排  (B, patch_num, C', patch_size)
-        stacked = stacked.permute(
-            0, 2, 1, 3
-        )  #  (batch_size, patch_num, num_features*(L+1), patch_size)
+        # 维度重排  (B, patch_num, C', patch_size)
+        #  (batch_size, patch_num, num_features*(L+1), patch_size)
+        stacked = stacked.permute(0, 2, 1, 3)
 
-        # 8) 合并 batch & patch_num → (B*patch_num, C', patch_size)
-        B, patch_num, C_channels, _ = stacked.shape
-        z_out = stacked.reshape(B * patch_num, C_channels, self.patch_size)
+        # 合并 batch & patch_num → (B*patch_num, C', patch_size)
+        batch_size, patch_num, new_channels, _ = stacked.shape
+        z_out = stacked.reshape(batch_size * patch_num, new_channels, self.patch_size)
 
         #  (batch_size * patch_num, num_features*(level+1), patch_size)
         return z_out

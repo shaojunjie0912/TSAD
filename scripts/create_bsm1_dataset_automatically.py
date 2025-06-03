@@ -3,6 +3,21 @@ from datetime import datetime
 import pandas as pd
 from anomaly_injector import AnomalyInjector, RandomAnomConfig
 
+# Si: 可溶性惰性有机物
+# Ss: 易生物降解可溶性有机物
+# Xi: 颗粒性惰性有机物
+# Xs: 缓速生物降解颗粒性有机物
+# Xbh: 活性异样生物量
+# Xba: 活性自养生物量
+# Xp: 微生物衰亡产生的颗粒性产物
+# So: 溶解氧
+# Sno: 硝态氮和亚硝态氮
+# Snh: 氨氮和铵态氮
+# Snd: 可溶性可生物讲解有机氮
+# Xnd: 颗粒性可生物降解有机氮
+# Salk: 碱度
+# Q: 流量
+
 
 def load_bsm1_data(txt_file: str, start_datetime_str: str) -> pd.DataFrame:
     # BSM1进水文件中的列名顺序 (根据BSM1技术报告)

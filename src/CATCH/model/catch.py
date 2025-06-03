@@ -72,10 +72,10 @@ class CATCH(nn.Module):
         self.patch_num = int((seq_len - patch_size) / patch_stride + 1)
         self.norm = nn.LayerNorm(self.patch_size)
 
-        # self.patcher = FftPatcher(patch_size=patch_size, patch_stride=patch_stride)
-        self.patcher = WaveletPatcher(
-            wave="db4", J=3, mode="symmetric", patch_size=patch_size, patch_stride=patch_stride
-        )
+        self.patcher = FftPatcher(patch_size=patch_size, patch_stride=patch_stride)
+        # self.patcher = WaveletPatcher(
+        #     wave="db4", J=3, mode="symmetric", patch_size=patch_size, patch_stride=patch_stride
+        # )
 
         # Backbone
         self.re_attn = True

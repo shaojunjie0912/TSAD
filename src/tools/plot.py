@@ -13,7 +13,11 @@ import pandas as pd
 
 
 def plot_anomaly_scores(
-    data: pd.DataFrame, scores: np.ndarray, results_dir: str, algorithm_name: str, dataset_name: str
+    data: pd.DataFrame,
+    scores: np.ndarray,
+    results_dir: str,
+    dataset_name: str,
+    algorithm_name: str,
 ):
     """
     绘制异常评分和原始数据
@@ -30,19 +34,19 @@ def plot_anomaly_scores(
     fig.suptitle("Anomaly Scores and Original Data")
 
     # 绘制异常评分
-    ax = axes[0]
-    ax.plot(scores, color=score_color, linewidth=1.5, label="Anomaly Score")
+    ax = axes[-1]
+    ax.plot(data.index, scores, color=score_color, linewidth=1.5, label="Anomaly Score")
     ax.set_ylabel("Anomaly Score")
     ax.legend(loc="upper right")
 
     # 绘制每个变量的时序图
     for i, col in enumerate(data.columns):
-        ax = axes[i + 1]
-        ax.plot(data[col], color=original_color, linewidth=1.5, label=col)
+        ax = axes[i]
+        ax.plot(data.index, data[col], color=original_color, linewidth=1.5, label=col)
         ax.set_ylabel(col)
         ax.legend(loc="upper right")
 
-    plt.xlabel("Time Step")
+    plt.xlabel("Time")
     plt.tight_layout()
     path = f"{results_dir}/{dataset_name}/{algorithm_name}/anomaly_scores"
     if not os.path.exists(path):
@@ -50,7 +54,7 @@ def plot_anomaly_scores(
     plt.savefig(f"{path}/anomaly_scores.png", dpi=400, bbox_inches="tight")
 
 
-def plot_anomaly_indices(
+def plot_anomaly_labels(
     data: pd.DataFrame,
     predictions: Dict[float, np.ndarray],
     results_dir: str,
@@ -66,7 +70,7 @@ def plot_anomaly_indices(
         fig.suptitle(f"Anomalies with ratio: {ratio}")
 
         # 获取异常时刻的索引
-        anomaly_indices = np.where(pred == 1)[0]
+        anomaly_labels = np.where(pred == 1)[0]
 
         # 绘制每个变量的时序图
         for i, col in enumerate(data.columns):
@@ -75,7 +79,7 @@ def plot_anomaly_indices(
             ax.plot(data.index, data[col], label=col, color=original_color, linewidth=1.5)
 
             # 在每个异常时刻画一条垂直的红线
-            for idx in anomaly_indices:
+            for idx in anomaly_labels:
                 ax.axvline(
                     x=data.index[idx], color=error_color, alpha=0.3, linestyle="-", linewidth=1
                 )
@@ -86,7 +90,7 @@ def plot_anomaly_indices(
         plt.xlabel("Time")
         plt.tight_layout()
 
-        path = f"{results_dir}/{dataset_name}/{algorithm_name}/anomaly_indices"
+        path = f"{results_dir}/{dataset_name}/{algorithm_name}/anomaly_labels"
         if not os.path.exists(path):
             os.makedirs(path)
 

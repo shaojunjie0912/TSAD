@@ -10,7 +10,7 @@ from CATCH.catch_pipeline import (
     catch_anomaly_score,
     catch_find_anomalies,
 )
-from tools.plot import plot_anomaly_indices, plot_anomaly_scores
+from tools.plot import plot_anomaly_labels, plot_anomaly_scores
 
 
 def load_config(path: str) -> Dict[str, Any]:
@@ -37,12 +37,18 @@ if __name__ == "__main__":
         ["Ss", "Xi", "Xs", "Xbh", "Snh", "Snd", "Xnd", "Q"],
     ]
 
-    # scores = catch_anomaly_score(data=data.values, config=catch_config)
-    # plot_anomaly_scores(data=data, scores=scores)
+    scores = catch_anomaly_score(data=data.values, config=catch_config)
+    plot_anomaly_scores(
+        data=data,
+        scores=scores,
+        results_dir="results",
+        dataset_name="bsm1_dry",
+        algorithm_name="CATCH",
+    )
 
     predictions = catch_find_anomalies(data=data.values, config=catch_config)
 
-    plot_anomaly_indices(
+    plot_anomaly_labels(
         data=data,
         predictions=predictions,
         results_dir="results",
