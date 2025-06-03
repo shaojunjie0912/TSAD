@@ -1,7 +1,6 @@
 from typing import Any, Dict, List, Union
 
 import numpy as np
-import pandas as pd
 import torch
 import torch.nn as nn
 from torch.optim import lr_scheduler
@@ -88,11 +87,19 @@ class CATCHPipeline(nn.Module):
         )
 
         # TODO: CATCH 中的 train_data 输入没有时间列?
-        num_features = data.shape[1]
 
         # TODO: 参数配置简化
         self.model = CATCH(
-            num_features=num_features,  # TODO: 放配置文件?
+            # data config
+            num_features=data.shape[1],  # TODO: 放配置文件?
+            patch_size=self.data_config["patch_size"],
+            patch_stride=self.data_config["patch_stride"],
+            level=self.data_config["level"],
+            wavelet=self.data_config["wavelet"],
+            mode=self.data_config["mode"],
+            seq_len=self.data_config["seq_len"],
+            affine=self.data_config["normalization"]["affine"],
+            subtract_last=self.data_config["normalization"]["subtract_last"],
             # model config
             num_layers=self.model_config["num_layers"],
             dim=self.model_config["d_cf"],
@@ -105,12 +112,6 @@ class CATCHPipeline(nn.Module):
             head_dropout=self.model_config["regularization"]["head_dropout"],
             regular_lambda=self.model_config["regularization"]["regular_lambda"],
             temperature=self.model_config["regularization"]["temperature"],
-            # data config
-            patch_size=self.data_config["patch_size"],
-            patch_stride=self.data_config["patch_stride"],
-            seq_len=self.data_config["seq_len"],
-            affine=self.data_config["normalization"]["affine"],
-            subtract_last=self.data_config["normalization"]["subtract_last"],
         )
         self.model.to(self.device)
 

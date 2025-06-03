@@ -7,6 +7,9 @@ anomaly_ratio = [2.0, 4.0, 6.0, 8.0, 10.0] # 异常率 x %
 # 数据处理参数
 # NOTE: (seq_len - patch_size) % patch_stride == 0 确保覆盖 window 中所有数据
 seq_len = 16               # 滑窗大小 (即 window_size) (时域 -> 频域)
+level = 3                  # 小波分解层数
+wavelet = "db4"            # 小波类型
+mode = "symmetric"         # 小波分解模式
 patch_size = 4             # 滑窗内 patch 大小 (将 seq_len 长度的 window 再分成 patch_size 大小的块, )
 patch_stride = 2           # 滑窗内 patch 步长
 inference_patch_size = 8   # 推理阶段分块大小 (频域)
@@ -23,7 +26,7 @@ subtract_last = false # RevIN 减去最后值
 # 模型架构核心参数
 num_layers = 3             # Transformer 编码器层数
 d_cf = 64                  # 内部特征维度(cf: channel-frequency), Transformer 编码器处理特征的维度(嵌入维度?)
-d_model = 128              # 输出维度 configs.d_model * 2 (通常是模型维度的两倍, 因为处理复数表示)
+d_model = 128              # 输出维度
 num_heads = 2              # 多头注意力头数
 d_head = 64                # 注意力头维度
 d_ff = 256                 # 前馈网络的隐藏层维度

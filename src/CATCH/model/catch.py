@@ -23,9 +23,11 @@ class CATCH(nn.Module):
         num_layers: int,
         affine: bool,
         subtract_last: bool,
-        patcher_type: Literal["fft", "wavelet"],
         patch_size: int,
         patch_stride: int,
+        level: int,
+        wavelet: str,
+        mode: str,
         seq_len: int,
         dim: int,
         num_heads: int,
@@ -37,9 +39,9 @@ class CATCH(nn.Module):
         regular_lambda: float,
         temperature: float,
         flatten_individual: bool,
-        **kwargs,
     ):
         super().__init__()
+        self.num_features = num_features
         self.revin_layer = RevIN(
             num_features=num_features,
             affine=affine,
@@ -47,37 +49,21 @@ class CATCH(nn.Module):
         )
 
         # Patching
-        self.norm = nn.LayerNorm(self.patch_size)
         # TODO: patch_size 和 patch_stride 目前都是固定的
-        self.patcher_type = patcher_type
         self.patch_size = patch_size
         self.patch_stride = patch_stride
         self.patch_num = int((seq_len - patch_size) / patch_stride + 1)
         self.patcher: nn.Module
         new_patch_size: int
-
-        if patcher_type=="fft":
-            self.patcher = FftPatcher(patch_size=patch_size, patch_stride=patch_stride)
-            new_patch_size = patch_size * 2
-        else:
-            level: int
-            wavelet: str
-            mode: str
-            try:
-                level = kwargs['level']
-                wavelet = kwargs['wavelet']
-                mode = kwargs.get('mode', 'symmetric') # mode 可以有一个默认值
-            except KeyError as e:
-                raise ValueError(f"Missing required argument for type 'wavelet': {e}") from e
-            self.patcher = WaveletPatcher(
-                patch_size=patch_size,
-                patch_stride=patch_stride,
-                level=level,
-                wavelet=wavelet,
-                mode=mode,
-            )
-            new_patch_size = patch_size * (level + 1)
-
+        self.patcher = WaveletPatcher(
+            patch_size=patch_size,
+            patch_stride=patch_stride,
+            level=level,
+            wavelet=wavelet,
+            mode=mode,
+        )
+        new_patch_size = patch_size * (level + 1)
+        self.norm = nn.LayerNorm(self.patch_size)
         self.mask_generator = ChannelMaskGenerator(
             patch_size=new_patch_size, num_features=num_features
         )
@@ -85,6 +71,7 @@ class CATCH(nn.Module):
         # Backbone
         self.re_attn = True
 
+        self.d_model = d_model
         self.frequency_transformer = ChannelMaskedTransformer(
             dim=dim,
             num_layers=num_layers,
@@ -94,34 +81,19 @@ class CATCH(nn.Module):
             dropout=dropout,
             patch_dim=new_patch_size,
             # horizon=self.horizon * 2,
-            d_model=d_model * 2,  # TODO: d_model * 2
+            d_model=d_model,  # TODO: d_model * 2
             regular_lambda=regular_lambda,
             temperature=temperature,
         )
 
         # Head
-        self.flatten_head_real = FlattenHead(
+        self.flatten_head = FlattenHead(
             individual=flatten_individual,
             num_features=num_features,
-            input_dim=d_model * 2 * self.patch_num,
+            input_dim=d_model * self.patch_num,  # TODO: d_model * 2 * self.patch_num
             seq_len=seq_len,
             head_dropout=head_dropout,
         )
-        self.flatten_head_imag = FlattenHead(
-            individual=flatten_individual,
-            num_features=num_features,
-            input_dim=d_model * 2 * self.patch_num,
-            seq_len=seq_len,
-            head_dropout=head_dropout,
-        )
-
-        # 反傅里叶变换后的实部虚部映射
-        self.ri_projection = nn.Linear(seq_len * 2, seq_len)
-
-        # 获取实部和虚部的线性层
-        # TODO: 为什么还要加一个线性层?
-        self.get_real = nn.Linear(d_model * 2, d_model * 2)
-        self.get_imag = nn.Linear(d_model * 2, d_model * 2)
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
         """_summary_
@@ -133,9 +105,8 @@ class CATCH(nn.Module):
             Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]: [时域重构结果, 频域重构结果, 动态对比损失]
         """
         batch_size = x.size(0)
-        num_features = x.size(2)
         # ---------------------------------------------
-        # ---------------- 前向模块 (FM) -------------------
+        # ---------------- 前向模块 (FM) --------------
         # ---------------------------------------------
         # 实例归一化
         x = self.revin_layer(x, "norm")
@@ -147,7 +118,7 @@ class CATCH(nn.Module):
         z_cat = self.patcher(x)
 
         # ------------------------------------------------------
-        # ---------------- 通道融合模块 (CFM) -------------------
+        # ---------------- 通道融合模块 (CFM) ------------------
         # ------------------------------------------------------
 
         # 通道掩码矩阵 (batch_size * patch_num, num_features, num_features)
@@ -156,44 +127,17 @@ class CATCH(nn.Module):
         # z_hat: (batch_size * patch_num, num_features, d_model * 2)
         z_hat, dc_loss = self.frequency_transformer(z_cat, channel_mask)
 
-        if self.patcher_type == "fft":
-            # 提取实部和虚部特征
-            z_hat_real = self.get_real(z_hat)  # (batch_size * patch_num, num_features, d_model * 2)
-            z_hat_imag = self.get_imag(z_hat)  # (batch_size * patch_num, num_features, d_model * 2)
+        z_hat = z_hat.reshape(batch_size, self.patch_num, self.num_features, self.d_model)
+        z_hat = z_hat.permute(0, 2, 1, 3)
 
-            z_hat_real = z_hat_real.reshape(
-                batch_size, self.patch_num, num_features, z_hat_real.shape[-1]
-            )
-            z_hat_imag = z_hat_imag.reshape(
-                batch_size, self.patch_num, num_features, z_hat_imag.shape[-1]
-            )
+        # 展平
+        z_hat = self.flatten_head(z_hat)
 
-            # z1: [bs, nvars， patch_num, horizon] TODO: horizon?
-            # 维度重排 (batch_size, num_features, patch_num, d_model * 2)
-            z_hat_real = z_hat_real.permute(0, 2, 1, 3)
-            z_hat_imag = z_hat_imag.permute(0, 2, 1, 3)
+        # -------------------------------------------------
+        # ------------ 时频重构模块 (TFRM) ----------------
+        # -------------------------------------------------
 
-            # 展平, 将分块特征重建为完整序列 (batch_size, num_features, seq_len)
-            z_hat_real = self.flatten_head_real(z_hat_real)
-            z_hat_imag = self.flatten_head_imag(z_hat_imag)
+        x_hat = z_hat.permute(0, 2, 1)  # 维度重排 (batch_size, seq_len, num_features)
+        x_hat = self.revin_layer(x_hat, "denorm")  # 逆实例归一化
 
-            # ------------ 时频重构模块 (TFRM) ----------------
-
-            # 拼接实虚部
-            z_hat = torch.complex(z_hat_real, z_hat_imag)
-
-            # 逆傅里叶变换 TODO: 虚部都是 0j, 微小的虚部信息有用吗?
-            x_hat = torch.fft.ifft(z_hat)
-            x_hat_real = x_hat.real
-            x_hat_imag = x_hat.imag
-            # 使用线性层组合时虚部, 获得最终重建序列 2 * seq_len -> seq_len
-            # (batch_size, num_features, seq_len)
-            x_hat = self.ri_projection(torch.cat((x_hat_real, x_hat_imag), dim=-1))
-
-            # denorm
-            x_hat = x_hat.permute(0, 2, 1)  # 维度重排 (batch_size, seq_len, num_features)
-            x_hat = self.revin_layer(x_hat, "denorm")  # 逆实例归一化
-
-            return x_hat, z_hat.permute(0, 2, 1), dc_loss
-        else:
-            
+        return x_hat, z_hat.permute(0, 2, 1), dc_loss
