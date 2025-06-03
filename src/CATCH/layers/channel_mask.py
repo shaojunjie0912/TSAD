@@ -8,31 +8,46 @@ from torch.nn.functional import gumbel_softmax
 # TODO: 通道之间的掩码规则如何制定? 随机采样?
 
 
+class Projector(torch.nn.Module):
+    def __init__(self, patch_size: int, num_features: int):
+        super().__init__()
+        self.linear_layer = torch.nn.Linear(patch_size, num_features, bias=False)  # (in, out)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.linear_layer(x)
+
+
 class ChannelMaskGenerator(torch.nn.Module):
     def __init__(self, patch_size: int, num_features: int):
         """_summary_
 
         Args:
-            patch_size (int): patch 大小(对应实部/虚部), 因此后面的 patch_size * 2
+            patch_size (int): patch 大小, FFT 和 WT 不同
             num_features (int): 特征数量(通道数)
         """
         super().__init__()
 
         # 掩码生成器, 用于生成通道连接概率矩阵
-        self.mask_generator = nn.Sequential(
-            torch.nn.Linear(patch_size * 2, num_features, bias=False),  # (in, out)
-            nn.Sigmoid(),  # NOTE: Sigmoid 激活函数 -> [0, 1] 概率值
-        )
+        self.projector = Projector(patch_size, num_features)
 
         # NOTE: 手动初始化? 不记录梯度
         with torch.no_grad():
             # NOTE: sigmod(wx + b) -> sigmod(0) = 0.5 表示通道相关概率中等
-            self.mask_generator[0].weight.zero_()
+            self.projector.linear_layer.weight.zero_()
 
+        self.mask_generator = nn.Sigmoid()  # NOTE: Sigmoid 激活函数 -> [0, 1] 概率值
         self.num_features = num_features
 
     def _bernoulli_gumbel_rsample(self, distribution_matrix: torch.Tensor) -> torch.Tensor:
-        b, c, d = distribution_matrix.shape  # (batch_size * patch_num, num_features, num_features)
+        """_summary_
+
+        Args:
+            distribution_matrix (torch.Tensor): (batch_size * patch_num, num_features, num_features)
+
+        Returns:
+            torch.Tensor: _description_
+        """
+        b, c, d = distribution_matrix.shape
 
         # (batch_size * patch_num * num_features * num_features, 1)
         flatten_matrix = rearrange(distribution_matrix, "b c d -> (b c d) 1")  # 展平概率 p
@@ -58,13 +73,14 @@ class ChannelMaskGenerator(torch.nn.Module):
         """_summary_
 
         Args:
-            x (torch.Tensor): shape (batch_size * patch_num, num_features, patch_size * 2)
+            x (torch.Tensor): shape (batch_size * patch_num, num_features, patch_size)
 
         Returns:
             torch.Tensor: _description_
         """
+        projected_x = self.projector(x)
         # 通道连接概率矩阵: (batch_size * patch_num, num_features, num_features)
-        distribution_matrix = self.mask_generator(x)
+        distribution_matrix = self.mask_generator(projected_x)
 
         # (batch_size * patch_num, num_features, num_features)
         resample_matrix = self._bernoulli_gumbel_rsample(distribution_matrix)
@@ -81,7 +97,7 @@ class ChannelMaskGenerator(torch.nn.Module):
 
 if __name__ == "__main__":
     torch.manual_seed(1037)
-    x = torch.randn(2, 3, 4)  # (batch_size, num_features, patch_size * 2)
-    channel_mask_generator = ChannelMaskGenerator(patch_size=2, num_features=3)
+    x = torch.randn(2, 3, 4)  # (batch_size, num_features, patch_size)
+    channel_mask_generator = ChannelMaskGenerator(patch_size=4, num_features=3)
     resample_matrix = channel_mask_generator(x)
     print(resample_matrix)

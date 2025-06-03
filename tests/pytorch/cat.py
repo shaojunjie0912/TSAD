@@ -1,5 +1,7 @@
 import torch
 
+print(torch.cuda.is_available())
+
 # num_samples * seq_len
 x = torch.tensor(
     [
