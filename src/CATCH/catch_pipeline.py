@@ -107,7 +107,7 @@ class CATCHPipeline(nn.Module):
             num_heads=self.model_config["num_heads"],
             d_head=self.model_config["d_head"],
             d_ff=self.model_config["d_ff"],
-            flatten_individual=self.model_config["flatten_individual"],
+            is_flatten_individual=self.model_config["flatten_individual"],
             dropout=self.model_config["regularization"]["dropout"],
             head_dropout=self.model_config["regularization"]["head_dropout"],
             regular_lambda=self.model_config["regularization"]["regular_lambda"],
@@ -170,6 +170,7 @@ class CATCHPipeline(nn.Module):
 
                 # 时域重建损失 (MSE)
                 time_rec_loss = self.time_loss_fn(x_hat, x)
+
                 # 频域重建损失 (包含实虚部的 fft + 直接计算复数频谱差异 complex + 平均绝对误差 MAE)
                 z_insnorm = self.model.revin_layer(
                     x, "transform"
@@ -416,7 +417,7 @@ class CATCHPipeline(nn.Module):
         return predictions
 
 
-def catch_anomaly_score(data: np.ndarray, config: Dict[str, Any]) -> np.ndarray:
+def catch_score_anomalies(data: np.ndarray, config: Dict[str, Any]) -> np.ndarray:
     """
     计算异常分数
     """

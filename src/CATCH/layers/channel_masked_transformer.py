@@ -6,7 +6,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from ..utils.channel_discover_loss import DynamicalContrastiveLoss
+from ..utils.channel_discover_loss import AdaptiveCCDLoss, DynamicalContrastiveLoss
 
 
 class PreNorm(nn.Module):
@@ -76,8 +76,9 @@ class ChannelMaskedAttention(nn.Module):
         num_heads: int,
         d_head: int,
         dropout: float = 0.8,
-        regular_lambda: float = 0.3,
-        temperature: float = 0.1,
+        ccd_temperature: float = 0.1,  # 用于 AdaptiveCCDLoss
+        ccd_regular_lambda: float = 0.1,  # 用于 AdaptiveCCDLoss
+        ccd_alignment_lambda: float = 1.0,  # 新增
     ):
         """
 
@@ -92,14 +93,18 @@ class ChannelMaskedAttention(nn.Module):
         super().__init__()
         self.num_heads = num_heads  # 多头注意力中的头数量, 每个头独立计算注意力，捕获不同的特征模式
         self.d_head = d_head  # 每个注意力头的维度大小, 决定了每个头处理的特征向量的长度
-        self.d_k = torch.sqrt(torch.tensor(self.d_head))
+        # self.d_k = torch.sqrt(torch.tensor(self.d_head))
         inner_dim = d_head * num_heads  # 所有头的总维度
         self.to_q = nn.Linear(dim, inner_dim)  # (..., dim) -> (..., inner_dim)
         self.to_k = nn.Linear(dim, inner_dim)
         self.to_v = nn.Linear(dim, inner_dim)
         self.to_out = nn.Sequential(nn.Linear(inner_dim, dim), nn.Dropout(dropout))
-        self.dynamical_contranstive_loss = DynamicalContrastiveLoss(
-            regular_lambda=regular_lambda, temperature=temperature
+
+        # 通道关联性发掘损失函数
+        self.ccd_loss_fn = AdaptiveCCDLoss(
+            alignment_temperature=ccd_temperature,
+            regularization_lambda=ccd_regular_lambda,
+            alignment_lambda=ccd_alignment_lambda,
         )
 
     def forward(
@@ -121,7 +126,7 @@ class ChannelMaskedAttention(nn.Module):
         q = self.to_q(x)
         k = self.to_k(x)
         v = self.to_v(x)
-        scale = 1 / self.d_k
+        scale = math.sqrt(self.d_head)
 
         # b: batch size
         # n: num_features(NOTE: 感觉这里是将特征维数视为了 seq_len)
@@ -134,51 +139,28 @@ class ChannelMaskedAttention(nn.Module):
         # 计算相似度 Q * K^T
         # shape: (b, h, n, d) * (b, h, d, n) -> (b, h, n, n)
         sims = torch.einsum("b h i d, b h j d -> b h i j", q, k)
-        dynamical_contrastive_loss = torch.tensor(0.0, device=x.device)  # 动态对比损失
-        if channel_mask is not None:
 
-            def _mask(sims: torch.Tensor, attn_mask: torch.Tensor) -> torch.Tensor:
-                """_summary_
+        ccd_loss = torch.tensor(0.0, device=x.device)  # 重命名 dc_loss 变量
 
-                Args:
-                    sims (torch.Tensor): shape (batch_size * patch_num, num_features, num_features)
-                    attn_mask (torch.Tensor): shape (batch_size * patch_num, num_features, num_features)
-
-                Returns:
-                    torch.Tensor: _description_
-                """
-                # NOTE: 这里不用下三角 tril, 而是用自定义 mask (Grumbel Softmax)
-                # TODO: 前提是 attn_mask 由 0 和 1 组成 ( channel_mask 中的 gumbel_softmax hard=True)
-                # 如果做一个阈值会怎样?
-                channel_mask = ~attn_mask.unsqueeze(1).bool()
-                sims = sims.masked_fill(mask=channel_mask, value=-math.log(1e10))
-                return sims
-
-            # 计算掩码相似度矩阵
-            masked_sims = _mask(sims, channel_mask)
-
-            # NOTE: 矩阵 Q 和 K 的 F-范数(所有元素的平方和开根号)
-            q_norm = torch.norm(q, dim=-1, keepdim=True)  # (b, h, n, 1)
-            k_norm = torch.norm(k, dim=-1, keepdim=True)  # (b, h, n, 1)
-            norm_sims = torch.einsum("b h i d, b h j d -> b h i j", q_norm, k_norm)
-
-            # 计算动态对比损失
-            dynamical_contrastive_loss = self.dynamical_contranstive_loss(sims, norm_sims, channel_mask)
+        if channel_mask is not None:  # channel_mask 是 GATChannelMasker 输出的软掩码 (b, n, n)
+            # 1. 使用软掩码调整CFM的注意力
+            masked_sims = (sims / self.scale) * channel_mask.unsqueeze(1)
+            # 2. 计算CCD损失
+            ccd_loss = self.ccd_loss_fn(sims, channel_mask)
         else:
-            masked_sims = sims
+            masked_sims = sims / self.scale
 
         # 计算注意力权重
-        attention_percents = F.softmax(masked_sims * scale, dim=-1)
+        attention_percents = F.softmax(masked_sims, dim=-1)
 
         # 计算注意力分数
         attention_scores = torch.einsum("b h i j, b h j d -> b h i d", attention_percents, v)
         attention_scores = einops.rearrange(attention_scores, "b h n d -> b n (h d)")
 
         # (b, n, h * d) -> (b, n, dim)
-        if channel_mask is not None:
-            return self.to_out(attention_scores), dynamical_contrastive_loss
-        else:
-            return self.to_out(attention_scores)
+        output_scores = self.to_out(attention_scores)
+
+        return output_scores, ccd_loss
 
 
 class ChannelMaskedTransformerBlocks(nn.Module):
@@ -192,8 +174,9 @@ class ChannelMaskedTransformerBlocks(nn.Module):
         d_head: int,
         d_ff: int,
         dropout: float = 0.8,
-        regular_lambda: float = 0.3,
-        temperature: float = 0.1,
+        ccd_temperature: float = 0.1,
+        ccd_regular_lambda: float = 0.1,
+        ccd_alignment_lambda: float = 1.0,
     ):
         """_summary_
 
@@ -221,8 +204,9 @@ class ChannelMaskedTransformerBlocks(nn.Module):
                                 num_heads=num_heads,
                                 d_head=d_head,
                                 dropout=dropout,
-                                regular_lambda=regular_lambda,
-                                temperature=temperature,
+                                ccd_temperature=ccd_temperature,
+                                ccd_regular_lambda=ccd_regular_lambda,
+                                ccd_alignment_lambda=ccd_alignment_lambda,
                             ),
                         ),
                         PreNorm(
@@ -285,8 +269,9 @@ class ChannelMaskedTransformer(nn.Module):
         patch_dim: int,
         # horizon: int, # TODO: 写多了?
         d_model: int,
-        regular_lambda: float = 0.3,
-        temperature: float = 0.1,
+        ccd_temperature: float = 0.1,
+        ccd_regular_lambda: float = 0.1,
+        ccd_alignment_lambda: float = 1.0,
     ):
         """_summary_
 
@@ -316,8 +301,9 @@ class ChannelMaskedTransformer(nn.Module):
             d_head=d_head,
             d_ff=d_ff,
             dropout=dropout,
-            regular_lambda=regular_lambda,
-            temperature=temperature,
+            ccd_temperature=ccd_temperature,
+            ccd_regular_lambda=ccd_regular_lambda,
+            ccd_alignment_lambda=ccd_alignment_lambda,
         )
 
         self.mlp_head = nn.Linear(dim, d_model)  # horizon

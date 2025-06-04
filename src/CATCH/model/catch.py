@@ -1,15 +1,12 @@
 from typing import List, Literal, Optional, Tuple
 
-import ptwt
 import torch
 import torch.nn as nn
 
-from ..layers.channel_mask import ChannelMaskGenerator
 from ..layers.channel_masked_transformer import ChannelMaskedTransformer
+from ..layers.channel_masker import GATChannelMasker
 from ..layers.flatten_head import FlattenHead
 from ..layers.patcher import FftPatcher, WaveletPatcher
-
-#
 from ..layers.RevIN import RevIN
 
 # TODO: 最外层的参数名称可以更加清晰完整
@@ -36,9 +33,10 @@ class CATCH(nn.Module):
         dropout: float,
         head_dropout: float,
         d_model: int,
-        regular_lambda: float,
-        temperature: float,
-        flatten_individual: bool,
+        ccd_temperature: float,
+        ccd_regular_lambda: float,
+        ccd_alignment_lambda: float,
+        is_flatten_individual: bool,
     ):
         super().__init__()
         self.num_features = num_features
@@ -64,8 +62,9 @@ class CATCH(nn.Module):
         )
         new_patch_size = patch_size * (level + 1)
         self.norm = nn.LayerNorm(self.patch_size)
-        self.mask_generator = ChannelMaskGenerator(
-            patch_size=new_patch_size, num_features=num_features
+        self.mask_generator = GATChannelMasker(
+            node_feature_dim=new_patch_size,
+            num_features=num_features,
         )
 
         # Backbone
@@ -82,13 +81,14 @@ class CATCH(nn.Module):
             patch_dim=new_patch_size,
             # horizon=self.horizon * 2,
             d_model=d_model,  # TODO: d_model * 2
-            regular_lambda=regular_lambda,
-            temperature=temperature,
+            ccd_temperature=ccd_temperature,
+            ccd_regular_lambda=ccd_regular_lambda,
+            ccd_alignment_lambda=ccd_alignment_lambda,
         )
 
         # Head
         self.flatten_head = FlattenHead(
-            individual=flatten_individual,
+            individual=is_flatten_individual,
             num_features=num_features,
             input_dim=d_model * self.patch_num,  # TODO: d_model * 2 * self.patch_num
             seq_len=seq_len,
@@ -127,16 +127,15 @@ class CATCH(nn.Module):
         # z_hat: (batch_size * patch_num, num_features, d_model * 2)
         z_hat, dc_loss = self.frequency_transformer(z_cat, channel_mask)
 
+        # -------------------------------------------------
+        # ------------ 时频重构模块 (TFRM) ----------------
+        # -------------------------------------------------
+
         z_hat = z_hat.reshape(batch_size, self.patch_num, self.num_features, self.d_model)
         z_hat = z_hat.permute(0, 2, 1, 3)
 
         # 展平
         z_hat = self.flatten_head(z_hat)
-
-        # -------------------------------------------------
-        # ------------ 时频重构模块 (TFRM) ----------------
-        # -------------------------------------------------
-
         x_hat = z_hat.permute(0, 2, 1)  # 维度重排 (batch_size, seq_len, num_features)
         x_hat = self.revin_layer(x_hat, "denorm")  # 逆实例归一化
 

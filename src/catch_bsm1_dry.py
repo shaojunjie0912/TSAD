@@ -7,8 +7,8 @@ import pandas as pd
 
 from CATCH.catch_pipeline import (
     CATCHPipeline,
-    catch_anomaly_score,
     catch_find_anomalies,
+    catch_score_anomalies,
 )
 from tools.plot import plot_anomaly_labels, plot_anomaly_scores
 
@@ -37,7 +37,7 @@ if __name__ == "__main__":
         ["Ss", "Xi", "Xs", "Xbh", "Snh", "Snd", "Xnd", "Q"],
     ]
 
-    scores = catch_anomaly_score(data=data.values, config=catch_config)
+    scores = catch_score_anomalies(data=data.values, config=catch_config)
     plot_anomaly_scores(
         data=data,
         scores=scores,
