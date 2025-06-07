@@ -5,8 +5,8 @@ import torch.nn as nn
 
 from ..layers.channel_masked_transformer import ChannelMaskedTransformer
 from ..layers.channel_masker import GATChannelMasker
+from ..layers.channel_patcher import FftPatcher, WaveletPatcher
 from ..layers.flatten_head import FlattenHead
-from ..layers.patcher import FftPatcher, WaveletPatcher
 from ..layers.RevIN import RevIN
 
 # TODO: 最外层的参数名称可以更加清晰完整
