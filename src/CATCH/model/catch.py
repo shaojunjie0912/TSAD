@@ -46,13 +46,14 @@ class CATCH(nn.Module):
             subtract_last=subtract_last,
         )
 
+        expanded_num_features = num_features * (level + 1)
+
         # Patching
         # TODO: patch_size 和 patch_stride 目前都是固定的
         self.patch_size = patch_size
         self.patch_stride = patch_stride
         self.patch_num = int((seq_len - patch_size) / patch_stride + 1)
-        self.patcher: nn.Module
-        new_patch_size: int
+
         self.patcher = WaveletPatcher(
             patch_size=patch_size,
             patch_stride=patch_stride,
@@ -60,11 +61,12 @@ class CATCH(nn.Module):
             wavelet=wavelet,
             mode=mode,
         )
-        new_patch_size = patch_size * (level + 1)
-        self.norm = nn.LayerNorm(self.patch_size)
+
+        self.norm = nn.LayerNorm(patch_size)
+
         self.mask_generator = GATChannelMasker(
-            node_feature_dim=new_patch_size,
-            num_features=num_features,
+            node_feature_dim=patch_size,
+            num_features=expanded_num_features,
         )
 
         # Backbone
@@ -78,7 +80,7 @@ class CATCH(nn.Module):
             d_ff=d_ff,
             d_head=d_head,
             dropout=dropout,
-            patch_dim=new_patch_size,
+            patch_dim=patch_size,
             # horizon=self.horizon * 2,
             d_model=d_model,  # TODO: d_model * 2
             ccd_temperature=ccd_temperature,
@@ -89,7 +91,7 @@ class CATCH(nn.Module):
         # Head
         self.flatten_head = FlattenHead(
             individual=is_flatten_individual,
-            num_features=num_features,
+            num_features=expanded_num_features,
             input_dim=d_model * self.patch_num,  # TODO: d_model * 2 * self.patch_num
             seq_len=seq_len,
             head_dropout=head_dropout,

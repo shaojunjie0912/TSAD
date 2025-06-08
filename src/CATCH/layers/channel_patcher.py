@@ -1,9 +1,9 @@
 from typing import List, Tuple
 
-import ptwt
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from ptwt.stationary_transform import swt
 
 
 class FftPatcher(nn.Module):
@@ -66,7 +66,6 @@ class WaveletPatcher(nn.Module):
         mode: str = "symmetric",
     ):
         super().__init__()
-        assert level >= 2, "For 1-level please use WaveletPatcher."
         self.patch_size = patch_size
         self.patch_stride = patch_stride
         self.level = level
@@ -87,34 +86,8 @@ class WaveletPatcher(nn.Module):
         pow2 = 2**self.level  # 2^level
         pad_len = (pow2 - seq_len % pow2) % pow2
         if pad_len > 0:
-            x = F.pad(x, (0, pad_len))  # F.pad 在最后一维右侧补 0： (left, right)
+            x = F.pad(x, (0, pad_len), mode="replicate")
         return x, pad_len
-
-    def _upsample_coeffs(self, coeffs: List[torch.Tensor], target_len: int) -> torch.Tensor:
-        """
-        把不同尺度的系数上采样到原始长度
-
-        Args:
-            coeffs (List[torch.Tensor]): 不同尺度的系数
-            target_len (int): 原始长度
-
-        Returns:
-            torch.Tensor: 上采样后的系数
-        """
-        upsampled = []
-        # cA_L, cD_L, cD_{L-1}, ..., cD_1
-        for k, c in enumerate(coeffs):
-            if k == 0:  # cA_L 近似系数
-                factor = 2**self.level
-            else:  # cD_{level + 1 - k} 细节系数
-                factor = 2 ** (self.level - k + 1)
-
-            # (B, C, T_small) -> repeat -> (B, C, T_small * factor)
-            c_up = c.repeat_interleave(repeats=factor, dim=-1)
-            c_up = c_up[..., :target_len]  # 裁到 target_len
-            upsampled.append(c_up)
-        # (B, C, level + 1, T_target)
-        return torch.stack(upsampled, dim=2)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """_summary_
@@ -123,36 +96,42 @@ class WaveletPatcher(nn.Module):
             x (torch.Tensor): (batch_size, seq_len, num_features)
 
         Returns:
-            torch.Tensor: _description_
+            torch.Tensor: (batch_size * patch_num,(level + 1) * num_features,  patch_size)
         """
 
         # 维度重排
+        B, T, N = x.shape
         x = x.permute(0, 2, 1)  #  (B, C, T)
 
         # 边界填充
         x, pad_len = self._pad_to_pow2(x)  #  (B, C, T_padded)
-        T_padded = x.size(-1)
+        T_pad = x.size(-1)
 
-        # 多层 DWT: coeffs = [cA_L, cD_L, ..., cD_1]
-        coeffs = ptwt.wavedec(
-            x, wavelet=self.wavelet, level=self.level, mode=self.mode  # type:ignore
+        # SWT
+        xn = x.reshape(B * N, T_pad)  # (B·N, T_pad)
+        # list[(B·N, T_pad)], len=L+1
+        coeffs = swt(xn, wavelet=self.wavelet, level=self.level, axis=-1)
+
+        # 顺序: [A_L, D_L, D_{L-1}, …, D_1]
+        coeff_stack = torch.stack(coeffs, dim=1)  # (B·N, L+1, T_pad)
+        coeff_stack = coeff_stack.view(B, N, self.level + 1, T_pad)  # (B, N, L+1, T_pad)
+
+        # -------- remove padding --------
+        if pad_len:
+            coeff_stack = coeff_stack[..., :-pad_len]
+
+        # -------- patch along time --------
+        # (B, N, L+1, T) ➜ unfold ➜ (B, N, L+1, P, p)
+        coeff_stack = coeff_stack.unfold(
+            dimension=-1,
+            size=self.patch_size,
+            step=self.patch_stride,
         )
 
-        # 上采样: -> (B, C, level + 1, T_padded)
-        stacked = self._upsample_coeffs(coeffs, T_padded)
+        # -------- reshape: (B, P, N, L+1, p) --------
+        coeff_stack = coeff_stack.permute(0, 3, 1, 2, 4)
+        B, P, N, Lp1, p = coeff_stack.shape
 
-        # 裁掉 padding -> 恢复原序列长度
-        if pad_len > 0:
-            stacked = stacked[..., :-pad_len]
-
-        # 频域 patching
-        # (B, C, level + 1, T_padded) -> (B, C, level + 1, patch_num, patch_size)
-        stacked = stacked.unfold(dimension=-1, size=self.patch_size, step=self.patch_stride)
-
-        # 维度重排 -> (B, patch_num, C, level + 1, patch_size)
-        stacked = stacked.permute(0, 3, 1, 2, 4)
-
-        batch_size, patch_num, num_features, level, patch_size = stacked.shape
-        # -> (batch_size * patch_num, num_features, (level + 1) * patch_size)
-        z_out = stacked.reshape(batch_size * patch_num, num_features, level * patch_size)
+        # -------- final output --------
+        z_out = coeff_stack.view(B * P, N * Lp1, p)  # (B·P, (L+1)·N, p)
         return z_out

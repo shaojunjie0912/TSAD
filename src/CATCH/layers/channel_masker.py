@@ -120,17 +120,17 @@ class GATChannelMasker(nn.Module):
         初始化 GATChannelMasker。
 
         Args:
-            node_feature_dim (int): 每个通道节点输入的特征维度 (来自 WaveletPatcher, 即 new_patch_size)
+            node_feature_dim (int): 每个通道节点输入的特征维度 (来自 WaveletPatcher, 即 patch_size)
             num_channels (int): 通道数量 (即图中的节点数量)
             num_gat_heads (int): GAT 中的注意力头数
             gat_head_dim (int): 每个GAT注意力头的维度
             dropout_rate (float): Attention权重的Dropout比率
         """
         super().__init__()
-        self.num_channels = num_features
+        # 更新通道数：num_features 是每个尺度的通道数，乘以 (L+1) 扩展通道数
+        self.num_channels = num_features  # 注意：num_features 为 (L+1) * num_features
         self.num_gat_heads = num_gat_heads
         self.gat_head_dim = gat_head_dim
-
         self.inner_dim = self.gat_head_dim * self.num_gat_heads  # Q, K 的总维度
 
         # 线性变换层，用于计算 Query 和 Key
@@ -140,7 +140,6 @@ class GATChannelMasker(nn.Module):
         self.attention_dropout = nn.Dropout(dropout_rate)
 
         # 初始化权重，使得初始的注意力分布是均匀的
-        # 即 Q 和 K 初始为0, 使得相似度为0, softmax后为均匀分布
         with torch.no_grad():
             self.to_q.weight.zero_()
             self.to_k.weight.zero_()
@@ -160,12 +159,10 @@ class GATChannelMasker(nn.Module):
         # x_nodes: (B_eff, N, D_node_feat) where N = num_channels
 
         # 线性投影得到 Q 和 K
-        # q_channels, k_channels: (B_eff, N, inner_dim)
         q_channels = self.to_q(x_nodes)
         k_channels = self.to_k(x_nodes)
 
         # 重塑以支持多头注意力
-        # q_channels, k_channels: (B_eff, H_gat, N, D_head_gat)
         q_channels = einops.rearrange(
             q_channels, "b n (h d) -> b h n d", h=self.num_gat_heads, d=self.gat_head_dim
         )
@@ -174,28 +171,15 @@ class GATChannelMasker(nn.Module):
         )
 
         # 计算缩放点积注意力原始分数 (相似度)
-        # scale 因子
         scale = math.sqrt(self.gat_head_dim)
-        # channel_sim: (B_eff, H_gat, N, N) (通道i的Q 与 通道j的K 的相似度)
         channel_sim = torch.einsum("b h i d, b h j d -> b h i j", q_channels, k_channels) / scale
 
-        # 应用 Softmax 得到注意力权重 (P(j|i))
-        # channel_att_weights: (B_eff, H_gat, N, N)
-        channel_att_weights = F.softmax(channel_sim, dim=-1)  # 在最后一个维度（key维度）上softmax
+        # 应用 Softmax 得到注意力权重
+        channel_att_weights = F.softmax(channel_sim, dim=-1)
         channel_att_weights = self.attention_dropout(channel_att_weights)
 
         # 平均多个头的注意力权重得到最终的软掩码
-        # soft_mask: (B_eff, N, N)
         soft_mask = channel_att_weights.mean(dim=1)
-
-        # （可选）确保对角线为1或较高值，表示强自相关。
-        # 一种简单方式是直接赋值，但这会破坏softmax的sum-to-1特性（如果后续需要）。
-        # 另一种方式是在计算channel_sim时给对角线加上一个偏置。
-        # 为了简单起见并允许模型学习自相关强度，我们暂时不强制修改对角线。
-        # 如果需要强制自环，可以在CATCH的CFM的ChannelMaskedAttention中，在使用mask时特殊处理对角线。
-        # 或者在这里后处理，例如:
-        # soft_mask_diag = torch.eye(self.num_channels, device=soft_mask.device, dtype=soft_mask.dtype).unsqueeze(0)
-        # soft_mask = soft_mask * (1 - soft_mask_diag) + soft_mask_diag # 强制对角线为1，非对角线为学习值
 
         return soft_mask
 
