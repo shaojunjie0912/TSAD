@@ -7,7 +7,6 @@ from torch.optim import lr_scheduler
 
 from .model.catch import CATCH
 from .utils.data import Normalizer, get_dataloader, get_train_val_dataloader
-from .utils.fre_rec_loss import FrequencyCriterion, FrequencyLoss
 from .utils.tools import EarlyStopping, adjust_learning_rate
 
 # TODO: CATCH 学习率的动态调整 adjust_lr? 那 OneCycleLR 还需要吗?
@@ -37,12 +36,14 @@ class CATCHPipeline(nn.Module):
         self.loss_config = config["loss"]
 
         self.time_loss_fn = nn.MSELoss()  # 时域损失函数
+
         self.freq_loss_fn = FrequencyLoss(  # 频域损失函数
             fft_mode=self.loss_config["fft_mode"],
             complex_error_type=self.loss_config["complex_error_type"],
             loss_type=self.loss_config["loss_type"],
             module_first=self.loss_config["module_first"],
         )
+
         self.dc_lambda = self.loss_config["dc_lambda"]
         self.freq_loss_lambda = self.loss_config["freq_loss_lambda"]
         self.freq_score_lambda = self.config["anomaly_detection"]["freq_score_lambda"]
@@ -57,6 +58,7 @@ class CATCHPipeline(nn.Module):
         self.time_anomaly_criterion = nn.MSELoss(
             reduction="none"
         )  # NOTE: 保留所有位置 square error
+
         self.freq_anomaly_criterion = FrequencyCriterion(
             fft_mode=self.loss_config["fft_mode"],
             complex_error_type=self.loss_config["complex_error_type"],
@@ -110,8 +112,9 @@ class CATCHPipeline(nn.Module):
             is_flatten_individual=self.model_config["flatten_individual"],
             dropout=self.model_config["regularization"]["dropout"],
             head_dropout=self.model_config["regularization"]["head_dropout"],
-            regular_lambda=self.model_config["regularization"]["regular_lambda"],
-            temperature=self.model_config["regularization"]["temperature"],
+            ccd_regular_lambda=self.model_config["regularization"]["ccd_regular_lambda"],
+            ccd_alignment_lambda=self.model_config["regularization"]["ccd_alignment_lambda"],
+            ccd_temperature=self.model_config["regularization"]["ccd_temperature"],
         )
         self.model.to(self.device)
 
@@ -127,7 +130,7 @@ class CATCHPipeline(nn.Module):
         main_params = [
             param for name, param in self.model.named_parameters() if "mask_generator" not in name
         ]
-        mask_params = self.model.mask_generator.parameters()
+        mask_params = self.model.masker.parameters()
 
         # 创建优化器 (NOTE: learning rate 会在 OneCycleLR 中更新)
         self.main_optimizer = torch.optim.Adam(

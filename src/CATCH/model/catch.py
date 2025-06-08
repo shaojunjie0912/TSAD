@@ -5,9 +5,8 @@ import torch.nn as nn
 
 from ..layers.channel_masked_transformer import ChannelMaskedTransformer
 from ..layers.channel_masker import GATChannelMasker
-from ..layers.channel_patcher import FftPatcher, WaveletPatcher
-from ..layers.flatten_head import FlattenHead
-from ..layers.RevIN import RevIN
+from ..layers.channel_patcher import InverseWaveletPatcher, WaveletPatcher
+from ..layers.preprocessor import FlattenHead, RevIN
 
 # TODO: 最外层的参数名称可以更加清晰完整
 
@@ -39,14 +38,11 @@ class CATCH(nn.Module):
         is_flatten_individual: bool,
     ):
         super().__init__()
-        self.num_features = num_features
         self.revin_layer = RevIN(
             num_features=num_features,
             affine=affine,
             subtract_last=subtract_last,
         )
-
-        expanded_num_features = num_features * (level + 1)
 
         # Patching
         # TODO: patch_size 和 patch_stride 目前都是固定的
@@ -62,18 +58,23 @@ class CATCH(nn.Module):
             mode=mode,
         )
 
-        self.norm = nn.LayerNorm(patch_size)
-
-        self.mask_generator = GATChannelMasker(
-            node_feature_dim=patch_size,
-            num_features=expanded_num_features,
+        self.inverse_patcher = InverseWaveletPatcher(
+            level=level,
+            wavelet=wavelet,
+            mode=mode,
         )
 
-        # Backbone
-        self.re_attn = True
+        self.norm = nn.LayerNorm(patch_size)
+
+        self.expanded_num_features = num_features * (level + 1)
+
+        self.masker = GATChannelMasker(
+            node_feature_dim=patch_size,
+            num_features=self.expanded_num_features,
+        )
 
         self.d_model = d_model
-        self.frequency_transformer = ChannelMaskedTransformer(
+        self.channel_masked_transformer = ChannelMaskedTransformer(
             dim=dim,
             num_layers=num_layers,
             num_heads=num_heads,
@@ -88,11 +89,10 @@ class CATCH(nn.Module):
             ccd_alignment_lambda=ccd_alignment_lambda,
         )
 
-        # Head
         self.flatten_head = FlattenHead(
             individual=is_flatten_individual,
-            num_features=expanded_num_features,
-            input_dim=d_model * self.patch_num,  # TODO: d_model * 2 * self.patch_num
+            num_features=self.expanded_num_features,
+            input_dim=d_model * self.patch_num,
             seq_len=seq_len,
             head_dropout=head_dropout,
         )
@@ -113,31 +113,33 @@ class CATCH(nn.Module):
         # 实例归一化
         x = self.revin_layer(x, "norm")
 
-        # patching (傅里叶变换 FFT /小波变换 WT)
-        # z_cat:
-        # FFT: (batch_size * patch_num, num_features, patch_size * 2)
-        # WT: (batch_size * patch_num, num_features, (level + 1) * patch_size)
+        # patching 小波变换 -> (batch_size * patch_num, extended_num_features, patch_size)
+        # extended_num_features = num_features * (level + 1)
         z_cat = self.patcher(x)
 
         # ------------------------------------------------------
         # ---------------- 通道融合模块 (CFM) ------------------
         # ------------------------------------------------------
 
-        # 通道掩码矩阵 (batch_size * patch_num, num_features, num_features)
-        channel_mask = self.mask_generator(z_cat)
+        # 通道掩码矩阵 (batch_size * patch_num, extended_num_features, extended_num_features)
+        channel_mask = self.masker(z_cat)
 
-        # z_hat: (batch_size * patch_num, num_features, d_model * 2)
-        z_hat, dc_loss = self.frequency_transformer(z_cat, channel_mask)
+        # z_hat: (batch_size * patch_num, extended_num_features, d_model)
+        z_hat, dc_loss = self.channel_masked_transformer(z_cat, channel_mask)
 
         # -------------------------------------------------
-        # ------------ 时频重构模块 (TFRM) ----------------
+        # ------------ 时尺重构模块 (TSRM) ----------------
         # -------------------------------------------------
 
-        z_hat = z_hat.reshape(batch_size, self.patch_num, self.num_features, self.d_model)
+        # -> (batch_size, extended_num_features, patch_num, d_model)
+        z_hat = z_hat.reshape(batch_size, self.patch_num, self.expanded_num_features, self.d_model)
         z_hat = z_hat.permute(0, 2, 1, 3)
 
-        # 展平
-        z_hat = self.flatten_head(z_hat)
+        z_hat = self.flatten_head(z_hat)  # (batch_size, extended_num_features, seq_len)
+
+        # 逆小波变换
+        z_hat = self.inverse_patcher(z_hat)  # -> (batch_size, num_features, seq_len)
+
         x_hat = z_hat.permute(0, 2, 1)  # 维度重排 (batch_size, seq_len, num_features)
         x_hat = self.revin_layer(x_hat, "denorm")  # 逆实例归一化
 

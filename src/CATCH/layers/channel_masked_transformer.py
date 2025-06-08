@@ -6,7 +6,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from ..utils.channel_discover_loss import AdaptiveCCDLoss, DynamicalContrastiveLoss
+from ..criterions.channel_discover_loss import AdaptiveCCDLoss
 
 
 class PreNorm(nn.Module):
@@ -93,7 +93,6 @@ class ChannelMaskedAttention(nn.Module):
         super().__init__()
         self.num_heads = num_heads  # 多头注意力中的头数量, 每个头独立计算注意力，捕获不同的特征模式
         self.d_head = d_head  # 每个注意力头的维度大小, 决定了每个头处理的特征向量的长度
-        # self.d_k = torch.sqrt(torch.tensor(self.d_head))
         inner_dim = d_head * num_heads  # 所有头的总维度
         self.to_q = nn.Linear(dim, inner_dim)  # (..., dim) -> (..., inner_dim)
         self.to_k = nn.Linear(dim, inner_dim)
@@ -144,11 +143,11 @@ class ChannelMaskedAttention(nn.Module):
 
         if channel_mask is not None:  # channel_mask 是 GATChannelMasker 输出的软掩码 (b, n, n)
             # 1. 使用软掩码调整CFM的注意力
-            masked_sims = (sims / self.scale) * channel_mask.unsqueeze(1)
+            masked_sims = (sims / scale) * channel_mask.unsqueeze(1)
             # 2. 计算CCD损失
             ccd_loss = self.ccd_loss_fn(sims, channel_mask)
         else:
-            masked_sims = sims / self.scale
+            masked_sims = sims / scale
 
         # 计算注意力权重
         attention_percents = F.softmax(masked_sims, dim=-1)
@@ -314,24 +313,24 @@ class ChannelMaskedTransformer(nn.Module):
         """_summary_
 
         Args:
-            x (torch.Tensor): shape: (batch_size * patch_num, num_features, pathch_size * 2)
+            x (torch.Tensor): shape: (batch_size * patch_num, extended_num_features, patch_size)
             mask (Optional[torch.Tensor], optional): _description_. Defaults to None.
 
         Returns:
             Tuple[torch.Tensor, Optional[torch.Tensor]]: _description_
         """
         # 将原始频域特征投影<嵌入>到 Transformer 的内部特征维度
-        # patch_size * 2 -> dim
-        # shape: (batch_size * patch_num, num_features, dim)
+        # patch_size -> dim
+        # shape: (batch_size * patch_num, extended_num_features, dim)
         x = self.patch_embedding(x)
 
         # Transformer
-        # shape: (batch_size * patch_num, num_features, dim)
+        # -> (batch_size * patch_num, extended_num_features, dim)
         x, dynamical_constrastive_loss = self.channel_transformer_blocks(x, channel_mask)
 
         x = self.dropout_layer(x)
 
-        # shape: (batch_size * patch_num, num_features, d_model)
+        # -> (batch_size * patch_num, extended_num_features, d_model)
         x = self.mlp_head(x).squeeze()
 
         return x, dynamical_constrastive_loss

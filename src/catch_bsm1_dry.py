@@ -2,14 +2,9 @@ import os
 import tomllib
 from typing import Any, Dict
 
-import numpy as np
 import pandas as pd
 
-from CATCH.catch_pipeline import (
-    CATCHPipeline,
-    catch_find_anomalies,
-    catch_score_anomalies,
-)
+from CATCH.catch_pipeline import catch_find_anomalies, catch_score_anomalies
 from tools.plot import plot_anomaly_labels, plot_anomaly_scores
 
 
@@ -34,7 +29,8 @@ if __name__ == "__main__":
 
     data = df.loc[
         :,
-        ["Ss", "Xi", "Xs", "Xbh", "Snh", "Snd", "Xnd", "Q"],
+        # ["Ss", "Xi", "Xs", "Xbh", "Snh", "Snd", "Xnd", "Q"],
+        ["Ss", "Xi", "Xs", "Xbh"],
     ]
 
     scores = catch_score_anomalies(data=data.values, config=catch_config)

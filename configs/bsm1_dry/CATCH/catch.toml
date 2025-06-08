@@ -35,11 +35,11 @@ flatten_individual = false # 是否为每个通道使用独立处理网络
 
 [model.regularization]
 # 正则化参数
-dropout = 0.2        # Transformer dropout 率
-head_dropout = 0.1   # 解码器头部 dropout 率
-regular_lambda = 0.5 # 对比损失正则化系数
-temperature = 0.07   # 对比学习温度参数
-
+dropout = 0.2              # Transformer dropout 率
+head_dropout = 0.1         # 解码器头部 dropout 率
+ccd_temperature = 0.1
+ccd_regular_lambda = 0.1
+ccd_alignment_lambda = 1.0
 
 [training]
 batch_size = 32              # 批量大小
