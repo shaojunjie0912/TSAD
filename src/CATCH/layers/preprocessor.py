@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class FlattenHead(nn.Module):
+class ReconstructionHead(nn.Module):
     def __init__(
         self,
         individual: bool,

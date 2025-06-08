@@ -6,7 +6,7 @@ import torch.nn as nn
 from ..layers.channel_masked_transformer import ChannelMaskedTransformer
 from ..layers.channel_masker import GATChannelMasker
 from ..layers.channel_patcher import InverseWaveletPatcher, WaveletPatcher
-from ..layers.preprocessor import FlattenHead, RevIN
+from ..layers.preprocessor import ReconstructionHead, RevIN
 
 # TODO: 最外层的参数名称可以更加清晰完整
 
@@ -89,7 +89,7 @@ class CATCH(nn.Module):
             ccd_alignment_lambda=ccd_alignment_lambda,
         )
 
-        self.flatten_head = FlattenHead(
+        self.reconstruction_head = ReconstructionHead(
             individual=is_flatten_individual,
             num_features=self.expanded_num_features,
             input_dim=d_model * self.patch_num,
@@ -125,7 +125,7 @@ class CATCH(nn.Module):
         channel_mask = self.masker(z_cat)
 
         # z_hat: (batch_size * patch_num, extended_num_features, d_model)
-        z_hat, dc_loss = self.channel_masked_transformer(z_cat, channel_mask)
+        z_hat, ccd_loss = self.channel_masked_transformer(z_cat, channel_mask)
 
         # -------------------------------------------------
         # ------------ 时尺重构模块 (TSRM) ----------------
@@ -135,12 +135,16 @@ class CATCH(nn.Module):
         z_hat = z_hat.reshape(batch_size, self.patch_num, self.expanded_num_features, self.d_model)
         z_hat = z_hat.permute(0, 2, 1, 3)
 
-        z_hat = self.flatten_head(z_hat)  # (batch_size, extended_num_features, seq_len)
+        # (batch_size, extended_num_features, seq_len)
+        reconstructed_coeffs = self.reconstruction_head(z_hat)
 
         # 逆小波变换
-        z_hat = self.inverse_patcher(z_hat)  # -> (batch_size, num_features, seq_len)
+        # -> (batch_size, num_features, seq_len)
+        x_hat_norm = self.inverse_patcher(reconstructed_coeffs)
 
-        x_hat = z_hat.permute(0, 2, 1)  # 维度重排 (batch_size, seq_len, num_features)
-        x_hat = self.revin_layer(x_hat, "denorm")  # 逆实例归一化
+        # 维度重排 (batch_size, seq_len, num_features)
+        x_hat_norm = x_hat_norm.permute(0, 2, 1)
+        x_hat = self.revin_layer(x_hat_norm, "denorm")  # 逆实例归一化
 
-        return x_hat, z_hat.permute(0, 2, 1), dc_loss
+        # (B, T, C), (B, T, (L+1)*C), ..
+        return x_hat, reconstructed_coeffs.permute(0, 2, 1), ccd_loss

@@ -22,23 +22,6 @@ class WaveletPatcher(nn.Module):
         self.wavelet = wavelet
         self.mode = mode
 
-    def _pad_to_pow2(self, x: torch.Tensor) -> Tuple[torch.Tensor, int]:
-        """
-        将序列长度 padding 到 2^level 的倍数
-
-        Args:
-            x (torch.Tensor): 输入序列
-
-        Returns:
-            Tuple[torch.Tensor, int]: 填充后的序列和填充长度
-        """
-        seq_len = x.size(-1)
-        pow2 = 2**self.level  # 2^level
-        pad_len = (pow2 - seq_len % pow2) % pow2
-        if pad_len > 0:
-            x = F.pad(x, (0, pad_len), mode="replicate")
-        return x, pad_len
-
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """_summary_
 
@@ -51,24 +34,18 @@ class WaveletPatcher(nn.Module):
 
         # 维度重排
         B, T, N = x.shape
+        if T % (2**self.level) != 0:
+            raise ValueError(f"seq_len {T} must be divisible by 2^{self.level}")
         x = x.permute(0, 2, 1)  #  (B, C, T)
 
-        # 边界填充
-        x, pad_len = self._pad_to_pow2(x)  #  (B, C, T_padded)
-        T_pad = x.size(-1)
-
         # SWT
-        xn = x.reshape(B * N, T_pad)  # (B·N, T_pad)
-        # list[(B·N, T_pad)], len=L+1
+        xn = x.reshape(B * N, T)  # (B·N, T)
+        # list[(B·N, T)], len=L+1
         coeffs = swt(xn, wavelet=self.wavelet, level=self.level, axis=-1)
 
         # 顺序: [A_L, D_L, D_{L-1}, …, D_1]
-        coeff_stack = torch.stack(coeffs, dim=1)  # (B·N, L+1, T_pad)
-        coeff_stack = coeff_stack.reshape(B, N, self.level + 1, T_pad)  # (B, N, L+1, T_pad)
-
-        # -------- remove padding --------
-        if pad_len:
-            coeff_stack = coeff_stack[..., :-pad_len]
+        coeff_stack = torch.stack(coeffs, dim=1)  # (B·N, L+1, T)
+        coeff_stack = coeff_stack.reshape(B, N, self.level + 1, T)  # (B, N, L+1, T)
 
         # -------- patch along time --------
         # (B, N, L+1, T) ➜ unfold ➜ (B, N, L+1, P, p)

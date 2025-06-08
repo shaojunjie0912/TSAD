@@ -9,6 +9,7 @@ from .model.catch import CATCH
 from .utils.data import Normalizer, get_dataloader, get_train_val_dataloader
 from .utils.tools import EarlyStopping, adjust_learning_rate
 
+# TODO: 超参数
 # TODO: CATCH 学习率的动态调整 adjust_lr? 那 OneCycleLR 还需要吗?
 # 而且原来代码中的 ajust_lr 直接传入了 config.lr, 而不是分别 lr 和 mask_lr
 # 导致 main_optimizer 和 mask_optimizer 的学习率一样了
@@ -35,14 +36,8 @@ class CATCHPipeline(nn.Module):
         self.training_config = config["training"]
         self.loss_config = config["loss"]
 
-        self.time_loss_fn = nn.MSELoss()  # 时域损失函数
-
-        self.freq_loss_fn = FrequencyLoss(  # 频域损失函数
-            fft_mode=self.loss_config["fft_mode"],
-            complex_error_type=self.loss_config["complex_error_type"],
-            loss_type=self.loss_config["loss_type"],
-            module_first=self.loss_config["module_first"],
-        )
+        self.time_loss_fn = nn.HuberLoss(delta=1.0)  # 时域损失函数
+        self.scale_loss_fn = nn.HuberLoss(delta=1.0)  # 尺度域损失函数
 
         self.dc_lambda = self.loss_config["dc_lambda"]
         self.freq_loss_lambda = self.loss_config["freq_loss_lambda"]
@@ -54,20 +49,8 @@ class CATCHPipeline(nn.Module):
         self.batch_size: int = self.training_config["batch_size"]
         self.seq_len: int = self.data_config["seq_len"]
 
-        # anomaly detection
-        self.time_anomaly_criterion = nn.MSELoss(
-            reduction="none"
-        )  # NOTE: 保留所有位置 square error
-
-        self.freq_anomaly_criterion = FrequencyCriterion(
-            fft_mode=self.loss_config["fft_mode"],
-            complex_error_type=self.loss_config["complex_error_type"],
-            loss_type=self.loss_config["loss_type"],
-            inference_patch_size=self.data_config["inference_patch_size"],
-            inference_patch_stride=self.data_config["inference_patch_stride"],
-            seq_len=self.data_config["seq_len"],
-            module_first=self.loss_config["module_first"],
-        )
+        # anomaly detection  # NOTE: 保留所有位置 square error
+        self.time_anomaly_criterion = nn.MSELoss(reduction="none")
 
         self.fitted: bool = False
 
@@ -167,11 +150,11 @@ class CATCHPipeline(nn.Module):
 
                 x = x.float().to(self.device)
                 self.model.train()  # TODO: 将模型设置为训练模式
-                x_hat, z_hat, dc_loss = self.model(x)  # NOTE: dc_loss: 动态对比损失
+                x_hat, z_hat, ccd_loss = self.model(x)  # NOTE: dc_loss: 动态对比损失
 
                 # ------------- 计算损失 -------------
 
-                # 时域重建损失 (MSE)
+                # 时域重建损失
                 time_rec_loss = self.time_loss_fn(x_hat, x)
 
                 # 频域重建损失 (包含实虚部的 fft + 直接计算复数频谱差异 complex + 平均绝对误差 MAE)
@@ -182,7 +165,9 @@ class CATCHPipeline(nn.Module):
 
                 # 总损失 = 时域重建损失 + 频域重建损失 + 动态对比损失
                 loss = (
-                    time_rec_loss + self.freq_loss_lambda * freq_rec_loss + self.dc_lambda * dc_loss
+                    time_rec_loss
+                    + self.freq_loss_lambda * freq_rec_loss
+                    + self.dc_lambda * ccd_loss
                 )
                 train_loss.append(loss.item())
 
@@ -196,7 +181,7 @@ class CATCHPipeline(nn.Module):
                         f"Batch [{i+1}/{len(self.train_dataloader)}], "
                         f"time rec loss: {time_rec_loss.item():.4f}, "
                         f"freq rec loss: {freq_rec_loss.item():.4f}, "
-                        f"dc loss: {dc_loss.item():.4f}"
+                        f"dc loss: {ccd_loss.item():.4f}"
                     )
 
                 loss.backward()
