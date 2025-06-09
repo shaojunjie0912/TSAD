@@ -39,8 +39,9 @@ class CATCHPipeline(nn.Module):
         self.time_loss_fn = nn.HuberLoss(delta=1.0)  # 时域损失函数
         self.scale_loss_fn = nn.HuberLoss(delta=1.0)  # 尺度域损失函数
 
-        self.dc_lambda = self.loss_config["dc_lambda"]
-        self.freq_loss_lambda = self.loss_config["freq_loss_lambda"]
+        self.ccd_lambda = self.loss_config["ccd_lambda"]
+        self.scale_loss_lambda = self.loss_config["scale_loss_lambda"]
+
         self.freq_score_lambda = self.config["anomaly_detection"]["freq_score_lambda"]
         self.anomaly_ratio: Union[List[float], float] = self.config["anomaly_detection"][
             "anomaly_ratio"
@@ -143,31 +144,29 @@ class CATCHPipeline(nn.Module):
 
         # 开始手写训练循环
         for epoch_idx in range(self.training_config["num_epochs"]):
+            self.model.train()  #  将模型设置为训练模式
             train_loss = []
             step = min(int(train_steps / 10), 100)  #
             for i, (x, _) in enumerate(self.train_dataloader):
                 self.main_optimizer.zero_grad()  # 主优化器梯度清零
 
                 x = x.float().to(self.device)
-                self.model.train()  # TODO: 将模型设置为训练模式
-                x_hat, z_hat, ccd_loss = self.model(x)  # NOTE: dc_loss: 动态对比损失
+
+                x_hat, s, s_hat, ccd_loss = self.model(x)
 
                 # ------------- 计算损失 -------------
 
                 # 时域重建损失
                 time_rec_loss = self.time_loss_fn(x_hat, x)
 
-                # 频域重建损失 (包含实虚部的 fft + 直接计算复数频谱差异 complex + 平均绝对误差 MAE)
-                z_insnorm = self.model.revin_layer(
-                    x, "transform"
-                )  # 实例归一化(使用存储的均值和标准差)
-                freq_rec_loss = self.freq_loss_fn(z_hat, z_insnorm)  # (重构值, 真实值)
+                # 尺度域重建损失
+                scale_rec_loss = self.scale_loss_fn(s_hat, s)
 
                 # 总损失 = 时域重建损失 + 频域重建损失 + 动态对比损失
                 loss = (
                     time_rec_loss
-                    + self.freq_loss_lambda * freq_rec_loss
-                    + self.dc_lambda * ccd_loss
+                    + self.scale_loss_lambda * scale_rec_loss
+                    + self.ccd_lambda * ccd_loss
                 )
                 train_loss.append(loss.item())
 
@@ -180,14 +179,14 @@ class CATCHPipeline(nn.Module):
                         f"Epoch [{epoch_idx+1}/{self.training_config['num_epochs']}], "
                         f"Batch [{i+1}/{len(self.train_dataloader)}], "
                         f"time rec loss: {time_rec_loss.item():.4f}, "
-                        f"freq rec loss: {freq_rec_loss.item():.4f}, "
-                        f"dc loss: {ccd_loss.item():.4f}"
+                        f"scale rec loss: {scale_rec_loss.item():.4f}, "
+                        f"ccd loss: {ccd_loss.item():.4f}"
                     )
 
                 loss.backward()
                 self.main_optimizer.step()
 
-            train_loss = np.mean(train_loss)  # TODO: 原: average 可加权
+            train_loss = np.mean(train_loss)
             valid_loss = self.validate(self.val_dataloader, self.time_loss_fn)
             print(
                 f"Epoch [{epoch_idx+1}/{self.training_config['num_epochs']}], "
@@ -219,20 +218,18 @@ class CATCHPipeline(nn.Module):
 
     def validate(self, val_dataloader, loss_fn):
         total_loss = []
-        self.model.eval()  # TODO: 将模型设置为评估模式
+        self.model.eval()  # NOTE: 将模型设置为评估模式
 
         with torch.no_grad():
-            for z, _ in val_dataloader:
-                z = z.float().to(self.device)
-                z_hat, _, _ = self.model(z)
-                z_hat = z_hat.detach().cpu()
-                true = z.detach().cpu()
+            for x, _ in val_dataloader:
+                x = x.float().to(self.device)
+                x_hat, _, _, _ = self.model(x)
                 # TODO: 验证时只看时域重构损失?
-                loss = loss_fn(z_hat, true).detach().cpu().numpy()
+                loss = loss_fn(x_hat, x).detach().cpu().numpy()
                 total_loss.append(loss)
 
         total_loss = np.mean(total_loss)
-        self.model.train()  # TODO: 重设回训练模式
+        self.model.train()  # NOTE: 重设回训练模式
         return total_loss
 
     def score_anomalies(self, data: np.ndarray) -> np.ndarray:

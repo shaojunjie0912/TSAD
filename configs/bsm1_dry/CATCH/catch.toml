@@ -52,10 +52,10 @@ lr_adj = "type1"             # 学习率调整策略
 
 
 [loss]
-dc_lambda = 0.005              # 动态对比损失权重
+ccd_lambda = 0.005             # 动态对比损失权重
 loss_type = "MAE"              # 辅助损失类型
 complex_error_type = "complex" # 辅助损失应用类型
 fft_mode = "fft"               # 频域变换模式
 freq_loss_mask = false         # 是否对频域损失计算使用掩码
-freq_loss_lambda = 0.005       # 频域辅助损失权重
+scale_loss_lambda = 0.005      # 尺度域辅助损失权重
 module_first = true            # 复数误差的处理顺序

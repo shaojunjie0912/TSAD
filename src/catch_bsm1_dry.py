@@ -30,7 +30,7 @@ if __name__ == "__main__":
     data = df.loc[
         :,
         # ["Ss", "Xi", "Xs", "Xbh", "Snh", "Snd", "Xnd", "Q"],
-        ["Ss", "Xi", "Xs", "Xbh"],
+        ["Ss", "Xi", "Xs"],
     ]
 
     scores = catch_score_anomalies(data=data.values, config=catch_config)

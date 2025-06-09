@@ -1,4 +1,4 @@
-from typing import List, Literal, Optional, Tuple
+from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -7,8 +7,6 @@ from ..layers.channel_masked_transformer import ChannelMaskedTransformer
 from ..layers.channel_masker import GATChannelMasker
 from ..layers.channel_patcher import InverseWaveletPatcher, WaveletPatcher
 from ..layers.preprocessor import ReconstructionHead, RevIN
-
-# TODO: 最外层的参数名称可以更加清晰完整
 
 
 # NOTE: 原来的 configs 是一个类, 所有参数都是类属性(从字典中读取并通过 setaddr 设置)
@@ -66,11 +64,11 @@ class CATCH(nn.Module):
 
         self.norm = nn.LayerNorm(patch_size)
 
-        self.expanded_num_features = num_features * (level + 1)
+        self.extended_num_features = num_features * (level + 1)
 
         self.masker = GATChannelMasker(
             node_feature_dim=patch_size,
-            num_features=self.expanded_num_features,
+            num_features=self.extended_num_features,
         )
 
         self.d_model = d_model
@@ -91,60 +89,71 @@ class CATCH(nn.Module):
 
         self.reconstruction_head = ReconstructionHead(
             individual=is_flatten_individual,
-            num_features=self.expanded_num_features,
+            num_features=self.extended_num_features,
             input_dim=d_model * self.patch_num,
             seq_len=seq_len,
             head_dropout=head_dropout,
         )
 
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+    def forward(
+        self, x: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
         """_summary_
 
         Args:
-            x (torch.Tensor): (batch_size, seq_len, num_features) (B, T, C), 这里的 seq_len 也是滑动窗口大小
+            x (torch.Tensor): (B, T, C) (B, T, C), 这里的 T 也是滑动窗口大小
 
         Returns:
             Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]: [时域重构结果, 频域重构结果, 动态对比损失]
         """
-        batch_size = x.size(0)
+        B = x.size(0)
         # ---------------------------------------------
         # ---------------- 前向模块 (FM) --------------
         # ---------------------------------------------
         # 实例归一化
-        x = self.revin_layer(x, "norm")
+        x_norm = self.revin_layer(x, "norm")
 
-        # patching 小波变换 -> (batch_size * patch_num, extended_num_features, patch_size)
-        # extended_num_features = num_features * (level + 1)
-        z_cat = self.patcher(x)
+        # patching 小波变换 -> (B * patch_num, Extd_C, patch_size)
+        # Extd_C = C * (L + 1)
+        original_coeffs, z_cat = self.patcher(x_norm)
 
         # ------------------------------------------------------
         # ---------------- 通道融合模块 (CFM) ------------------
         # ------------------------------------------------------
 
-        # 通道掩码矩阵 (batch_size * patch_num, extended_num_features, extended_num_features)
+        # 通道掩码矩阵 (B * patch_num, Extd_C, Extd_C)
         channel_mask = self.masker(z_cat)
 
-        # z_hat: (batch_size * patch_num, extended_num_features, d_model)
+        # z_hat: (B * patch_num, Extd_C, d_model)
         z_hat, ccd_loss = self.channel_masked_transformer(z_cat, channel_mask)
 
         # -------------------------------------------------
         # ------------ 时尺重构模块 (TSRM) ----------------
         # -------------------------------------------------
 
-        # -> (batch_size, extended_num_features, patch_num, d_model)
-        z_hat = z_hat.reshape(batch_size, self.patch_num, self.expanded_num_features, self.d_model)
+        # -> (B, Extd_C, patch_num, d_model)
+        z_hat = z_hat.reshape(B, self.patch_num, self.extended_num_features, self.d_model)
         z_hat = z_hat.permute(0, 2, 1, 3)
 
-        # (batch_size, extended_num_features, seq_len)
+        # (B, Extd_C, T)
         reconstructed_coeffs = self.reconstruction_head(z_hat)
 
         # 逆小波变换
-        # -> (batch_size, num_features, seq_len)
+        # -> (B, C, T)
         x_hat_norm = self.inverse_patcher(reconstructed_coeffs)
 
-        # 维度重排 (batch_size, seq_len, num_features)
+        # 维度重排 (B, T, C)
         x_hat_norm = x_hat_norm.permute(0, 2, 1)
         x_hat = self.revin_layer(x_hat_norm, "denorm")  # 逆实例归一化
 
-        # (B, T, C), (B, T, (L+1)*C), ..
-        return x_hat, reconstructed_coeffs.permute(0, 2, 1), ccd_loss
+        # x: 时间域原始值 (B, T, C)
+        # x_hat: 时间域重构值 (B, T, C)
+        # original_coeffs: 尺度域原始值 (B, T, Extd_C)
+        # reconstructed_coeffs: 尺度域重构值 (B, T, Extd_C)
+        # ccd_loss: 通道相关性发掘损失
+        return (
+            x_hat,
+            original_coeffs.permute(0, 2, 1),
+            reconstructed_coeffs.permute(0, 2, 1),
+            ccd_loss,
+        )
