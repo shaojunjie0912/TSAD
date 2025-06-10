@@ -1,3 +1,7 @@
+"""
+通道融合模块 (Channel Fusion Module, CFM) 核心实现
+"""
+
 import math
 from typing import Optional, Tuple, Union
 
@@ -112,7 +116,7 @@ class ChannelMaskedAttention(nn.Module):
         """_summary_
 
         Args:
-            x (torch.Tensor): shape(batch_size * patch_num, num_features, dim) NOTE: patch_size * 2 映射 dim
+            x (torch.Tensor): shape(batch_size * patch_num, num_features, dim)
             mask (Optional[torch.Tensor], optional): 通道掩码矩阵
 
         Returns:
@@ -139,7 +143,7 @@ class ChannelMaskedAttention(nn.Module):
         # shape: (b, h, n, d) * (b, h, d, n) -> (b, h, n, n)
         sims = torch.einsum("b h i d, b h j d -> b h i j", q, k)
 
-        ccd_loss = torch.tensor(0.0, device=x.device)  # 重命名 dc_loss 变量
+        ccd_loss = torch.tensor(0.0, device=x.device)
 
         if channel_mask is not None:  # channel_mask 是 GATChannelMasker 输出的软掩码 (b, n, n)
             # 1. 使用软掩码调整CFM的注意力
@@ -238,20 +242,20 @@ class ChannelMaskedTransformerBlocks(nn.Module):
         for layer in self.layers:
             attention_layer, feed_forward_layer = layer  # type: ignore
 
-            attention_scores, dynamical_constrastive_loss = attention_layer(
+            attention_scores, ccd_loss = attention_layer(
                 x,
                 channel_mask=channel_mask,  # NOTE: **kwargs: mask
             )
 
-            total_loss = total_loss + dynamical_constrastive_loss
+            total_loss = total_loss + ccd_loss
 
             # Replace in-place operations with out-of-place operations
             x = x + attention_scores  # Residual connection 1
             x = x + feed_forward_layer(x)  # Feedforward + Residual connection 2
 
-        dynamical_constrastive_loss = total_loss / len(self.layers)  # 每一层平均动态对比损失
+        ccd_loss = total_loss / len(self.layers)  # 每一层平均动态对比损失
         # NOTE: x shape: (batch_size * patch_num, num_features, dim)
-        return x, dynamical_constrastive_loss
+        return x, ccd_loss
 
 
 class ChannelMaskedTransformer(nn.Module):
@@ -266,7 +270,6 @@ class ChannelMaskedTransformer(nn.Module):
         d_head: int,
         dropout: float,
         patch_dim: int,
-        # horizon: int, # TODO: 写多了?
         d_model: int,
         ccd_temperature: float = 0.1,
         ccd_regular_lambda: float = 0.1,
@@ -282,7 +285,6 @@ class ChannelMaskedTransformer(nn.Module):
             d_head (int): 每个头的特征维度 (configs.d_head)
             dropout (float): 丢弃率, 防止过拟合 (默认 0.8)
             patch_dim (int): patch_size * 2
-            horizon (int): _description_
             d_model (int): TODO: 输出维度 configs.d_model * 2 (通常是模型维度的两倍, 因为处理复数表示)
             regular_lambda (float, optional): _description_. Defaults to 0.3.
             temperature (float, optional): _description_. Defaults to 0.1.
@@ -326,11 +328,11 @@ class ChannelMaskedTransformer(nn.Module):
 
         # Transformer
         # -> (batch_size * patch_num, extended_num_features, dim)
-        x, dynamical_constrastive_loss = self.channel_transformer_blocks(x, channel_mask)
+        x, ccd_loss = self.channel_transformer_blocks(x, channel_mask)
 
         x = self.dropout_layer(x)
 
         # -> (batch_size * patch_num, extended_num_features, d_model)
-        x = self.mlp_head(x).squeeze()
+        x = self.mlp_head(x)
 
-        return x, dynamical_constrastive_loss
+        return x, ccd_loss

@@ -28,11 +28,11 @@ class CATCH(nn.Module):
         d_head: int,
         d_ff: int,
         dropout: float,
-        head_dropout: float,
+        rec_head_dropout: float,
         d_model: int,
-        ccd_temperature: float,
+        ccd_align_temperature: float,
         ccd_regular_lambda: float,
-        ccd_alignment_lambda: float,
+        ccd_align_lambda: float,
         is_flatten_individual: bool,
     ):
         super().__init__()
@@ -80,11 +80,10 @@ class CATCH(nn.Module):
             d_head=d_head,
             dropout=dropout,
             patch_dim=patch_size,
-            # horizon=self.horizon * 2,
-            d_model=d_model,  # TODO: d_model * 2
-            ccd_temperature=ccd_temperature,
+            d_model=d_model,
+            ccd_temperature=ccd_align_temperature,
             ccd_regular_lambda=ccd_regular_lambda,
-            ccd_alignment_lambda=ccd_alignment_lambda,
+            ccd_alignment_lambda=ccd_align_lambda,
         )
 
         self.reconstruction_head = ReconstructionHead(
@@ -92,7 +91,7 @@ class CATCH(nn.Module):
             num_features=self.extended_num_features,
             input_dim=d_model * self.patch_num,
             seq_len=seq_len,
-            head_dropout=head_dropout,
+            head_dropout=rec_head_dropout,
         )
 
     def forward(

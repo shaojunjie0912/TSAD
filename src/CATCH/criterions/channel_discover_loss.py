@@ -1,6 +1,13 @@
+"""
+通道相关性发掘 (Channel Correlation Discovery, CCD) 损失
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+# 1. 协同学习：通过对齐损失，让 Transformer 的注意力机制学习 GATChannelMasker 发现的显式图结构，使得通道融合更有目的性。
+# 2. 防止过拟合：通过正则化损失，鼓励模型学习稀疏且真正重要的通道关联，避免在所有 patch 上都学习到一个“什么都相关”的无用模式。
 
 
 class AdaptiveCCDLoss(nn.Module):
@@ -15,7 +22,7 @@ class AdaptiveCCDLoss(nn.Module):
         alignment_temperature: float = 0.1,
         regularization_lambda: float = 0.1,
         alignment_lambda: float = 1.0,
-    ):  # 新增对齐损失的权重
+    ):
         """
         Args:
             alignment_temperature (float): 用于注意力对齐损失中softmax的温度参数。
@@ -23,9 +30,9 @@ class AdaptiveCCDLoss(nn.Module):
             alignment_lambda (float): 通道注意力对齐损失的权重系数。
         """
         super().__init__()
-        self.alignment_temperature = alignment_temperature
-        self.regularization_lambda = regularization_lambda
-        self.alignment_lambda = alignment_lambda
+        self.align_temperature = alignment_temperature
+        self.regular_lambda = regularization_lambda
+        self.align_lambda = alignment_lambda
 
     def forward(
         self, cfm_attention_logits: torch.Tensor, soft_channel_mask: torch.Tensor
@@ -63,7 +70,7 @@ class AdaptiveCCDLoss(nn.Module):
         # 将CMT的logits转换为对数概率 (log P_cfm(j|i))
         # 除以温度参数可以锐化或平滑分布
         log_probs_cfm_attention = F.log_softmax(
-            cfm_att_logits_avg_heads / self.alignment_temperature,
+            cfm_att_logits_avg_heads / self.align_temperature,
             dim=-1,  # 对每个查询通道i，在所有可能的键通道j上进行softmax
         )  # (B_eff, N, N)
 
@@ -91,8 +98,7 @@ class AdaptiveCCDLoss(nn.Module):
 
         # --- 总损失 ---
         total_ccd_loss = (
-            self.alignment_lambda * alignment_loss
-            + self.regularization_lambda * mask_regularization_loss
+            self.align_lambda * alignment_loss + self.regular_lambda * mask_regularization_loss
         )
 
         return total_ccd_loss

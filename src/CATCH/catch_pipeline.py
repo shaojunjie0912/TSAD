@@ -9,43 +9,26 @@ from .model.catch import CATCH
 from .utils.data import Normalizer, get_dataloader, get_train_val_dataloader
 from .utils.tools import EarlyStopping, adjust_learning_rate
 
-# TODO: 超参数
-# TODO: CATCH 学习率的动态调整 adjust_lr? 那 OneCycleLR 还需要吗?
-# 而且原来代码中的 ajust_lr 直接传入了 config.lr, 而不是分别 lr 和 mask_lr
-# 导致 main_optimizer 和 mask_optimizer 的学习率一样了
-# NOTE: 不用 lightning 版本了, 记得 to(device)
-# TODO: 有关 epoch 花费多少时间懒得写了
-# TODO: 验证一下 CATCH 中的 thre 是否是不重叠窗口
-# TODO: Transformer 需要大量数据?
-
-# NOTE: CATCH 根据数据集元信息 csv 来分割整个数据集用以训练和测试
-# CATCH 最后一个不足窗口大小的部分会被丢弃
-# TODO: Maybe 得写一个通用数据处理模块?
-# TODO: 设计模式: 工厂方法, 测试多个算法, 用相同接口?
-# TODO: 将模型训练, 数据加载从主逻辑分离
-
 
 class CATCHPipeline(nn.Module):
     def __init__(self, config: Dict[str, Any]):
         super().__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.config = config
-        self.model_config = config["model"]
         self.data_config = config["data"]
         self.model_config = config["model"]
         self.training_config = config["training"]
         self.loss_config = config["loss"]
 
-        self.time_loss_fn = nn.HuberLoss(delta=1.0)  # 时域损失函数
+        self.time_loss_fn = nn.HuberLoss(delta=1.0)  # 时域损失函数 TODO: 超参数
         self.scale_loss_fn = nn.HuberLoss(delta=1.0)  # 尺度域损失函数
 
-        self.ccd_lambda = self.loss_config["ccd_lambda"]
+        self.ccd_loss_lambda = self.loss_config["ccd_loss_lambda"]
         self.scale_loss_lambda = self.loss_config["scale_loss_lambda"]
 
-        self.freq_score_lambda = self.config["anomaly_detection"]["freq_score_lambda"]
-        self.anomaly_ratio: Union[List[float], float] = self.config["anomaly_detection"][
-            "anomaly_ratio"
-        ]
+        self.anomaly_config = config["anomaly_detection"]
+        self.freq_score_lambda = self.anomaly_config["freq_score_lambda"]
+        self.anomaly_ratio: Union[List[float], float] = self.anomaly_config["anomaly_ratio"]
 
         self.batch_size: int = self.training_config["batch_size"]
         self.seq_len: int = self.data_config["seq_len"]
@@ -72,38 +55,37 @@ class CATCHPipeline(nn.Module):
             target_transform=self.transform,  # NOTE: 重构 X=Y 因此相同处理
         )
 
-        # TODO: CATCH 中的 train_data 输入没有时间列?
+        fm_config = self.model_config["FM"]
+        cfm_config = self.model_config["CFM"]
+        tsrm_config = self.model_config["TSRM"]
 
-        # TODO: 参数配置简化
         self.model = CATCH(
             # data config
-            num_features=data.shape[1],  # TODO: 放配置文件?
+            num_features=data.shape[1],
+            seq_len=self.data_config["seq_len"],
             patch_size=self.data_config["patch_size"],
             patch_stride=self.data_config["patch_stride"],
-            level=self.data_config["level"],
-            wavelet=self.data_config["wavelet"],
-            mode=self.data_config["mode"],
-            seq_len=self.data_config["seq_len"],
-            affine=self.data_config["normalization"]["affine"],
-            subtract_last=self.data_config["normalization"]["subtract_last"],
             # model config
-            num_layers=self.model_config["num_layers"],
-            dim=self.model_config["d_cf"],
-            d_model=self.model_config["d_model"],
-            num_heads=self.model_config["num_heads"],
-            d_head=self.model_config["d_head"],
-            d_ff=self.model_config["d_ff"],
-            is_flatten_individual=self.model_config["flatten_individual"],
-            dropout=self.model_config["regularization"]["dropout"],
-            head_dropout=self.model_config["regularization"]["head_dropout"],
-            ccd_regular_lambda=self.model_config["regularization"]["ccd_regular_lambda"],
-            ccd_alignment_lambda=self.model_config["regularization"]["ccd_alignment_lambda"],
-            ccd_temperature=self.model_config["regularization"]["ccd_temperature"],
+            affine=fm_config["affine"],
+            subtract_last=fm_config["subtract_last"],
+            level=fm_config["level"],
+            wavelet=fm_config["wavelet"],
+            mode=fm_config["mode"],
+            num_layers=cfm_config["num_layers"],
+            dim=cfm_config["d_cf"],
+            d_model=cfm_config["d_model"],
+            num_heads=cfm_config["num_heads"],
+            d_head=cfm_config["d_head"],
+            d_ff=cfm_config["d_ff"],
+            dropout=cfm_config["dropout"],
+            is_flatten_individual=tsrm_config["is_flatten_individual"],
+            rec_head_dropout=tsrm_config["rec_head_dropout"],
+            # loss config
+            ccd_regular_lambda=self.loss_config["ccd_regular_lambda"],
+            ccd_align_lambda=self.loss_config["ccd_align_lambda"],
+            ccd_align_temperature=self.loss_config["ccd_align_temperature"],
         )
         self.model.to(self.device)
-
-        total_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
-        print(f"Total trainable parameters: {total_params}")
 
         self.early_stopping = EarlyStopping(
             patience=self.training_config["patience"],
@@ -166,7 +148,7 @@ class CATCHPipeline(nn.Module):
                 loss = (
                     time_rec_loss
                     + self.scale_loss_lambda * scale_rec_loss
-                    + self.ccd_lambda * ccd_loss
+                    + self.ccd_loss_lambda * ccd_loss
                 )
                 train_loss.append(loss.item())
 

@@ -88,21 +88,3 @@ class GATChannelMasker(nn.Module):
         soft_mask = channel_att_weights.mean(dim=1)
 
         return soft_mask
-
-
-if __name__ == "__main__":
-    torch.manual_seed(1037)
-
-    # 测试 GATChannelMasker
-    # 创建一个简单的输入张量
-    batch_size = 2
-    num_channels = 3
-    node_feature_dim = 4
-    x_nodes = torch.randn(batch_size, num_channels, node_feature_dim)
-
-    # 初始化 GATChannelMasker
-    masker = GATChannelMasker(node_feature_dim, num_channels)
-
-    # 前向传播
-    soft_mask = masker(x_nodes)
-    print(soft_mask)
