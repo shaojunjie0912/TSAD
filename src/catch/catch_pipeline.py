@@ -27,7 +27,7 @@ class CATCHPipeline(nn.Module):
         self.scale_loss_lambda = self.loss_config["scale_loss_lambda"]
 
         self.anomaly_config = config["anomaly_detection"]
-        self.freq_score_lambda = self.anomaly_config["freq_score_lambda"]
+        self.scale_score_lambda = self.anomaly_config["scale_score_lambda"]
         self.anomaly_ratio: Union[List[float], float] = self.anomaly_config["anomaly_ratio"]
 
         self.batch_size: int = self.training_config["batch_size"]
@@ -36,23 +36,21 @@ class CATCHPipeline(nn.Module):
         # anomaly detection  # NOTE: 保留所有位置 square error
         # TODO: 时间域 + 尺度域异常评分标准
         self.time_anomaly_criterion = nn.MSELoss(reduction="none")
-        self.freq_anomaly_criterion = nn.MSELoss(reduction="none")
+        self.scale_anomaly_criterion = nn.MSELoss(reduction="none")
 
         self.fitted: bool = False
 
     # train + val
     def fit(self, data: np.ndarray):
-        self.normalizer = Normalizer()
-        self.normalizer.fit(data)
-        self.transform = self.normalizer.as_transform()
+        # TODO: 删除了 Normalizer
         self.train_dataloader, self.val_dataloader = get_train_val_dataloader(
             data=data,
             train_rate=0.8,
             batch_size=self.batch_size,
             window_size=self.seq_len,
             step_size=1,
-            transform=self.transform,
-            target_transform=self.transform,  # NOTE: 重构 X=Y 因此相同处理
+            transform=None,
+            target_transform=None,
         )
 
         fm_config = self.model_config["FM"]
@@ -122,10 +120,10 @@ class CATCHPipeline(nn.Module):
 
                 x = x.float().to(self.device)
 
-                x_hat, s, s_hat, ccd_loss = self.model(x)
+                x_orig, x_hat, s, s_hat, ccd_loss = self.model(x)
 
                 # --- 计算总损失 ---
-                time_rec_loss = self.time_loss_fn(x_hat, x)
+                time_rec_loss = self.time_loss_fn(x_hat, x_orig)
                 scale_rec_loss = self.scale_loss_fn(s_hat, s)
                 loss = (
                     time_rec_loss
@@ -164,37 +162,25 @@ class CATCHPipeline(nn.Module):
         with torch.no_grad():
             for x, _ in val_dataloader:
                 x = x.float().to(self.device)
-                x_hat, _, _, _ = self.model(x)
-                loss = loss_fn(x_hat, x).item()  # TODO: 验证时只看时域重构损失?
+                x_orig, x_hat, _, _, _ = self.model(x)
+                loss = loss_fn(x_hat, x_orig).item()  # TODO: 验证时只看时域重构损失?
                 total_loss.append(loss)
         self.model.train()  # NOTE: 重设回训练模式
         return np.mean(total_loss)
 
     def score_anomalies(self, data: np.ndarray) -> np.ndarray:
-        """_summary_
-
-        Args:
-            data (np.ndarray): 测试数据
-
-        Raises:
-            ValueError: _description_
-
-        Returns:
-            np.ndarray: 测试数据每个时刻的异常评分
-        """
         if not self.fitted:
             raise ValueError("Please fit the model first!")
 
-        # 非重叠窗口
         self.predict_dataloader = get_dataloader(
-            stage="predict",  # NOTE: 非重叠窗口
+            stage="predict",  # NOTE: 窗口不重叠
             data=data,
             batch_size=self.batch_size,
             window_size=self.seq_len,
             step_size=self.seq_len,
             shuffle=False,
-            transform=self.transform,
-            target_transform=self.transform,  # NOTE: 重构 X=Y 因此相同处理
+            transform=None,
+            target_transform=None,
         )
         self.model.to(self.device)
         self.model.eval()
@@ -202,139 +188,46 @@ class CATCHPipeline(nn.Module):
         batch_anomaly_scores = []
         with torch.no_grad():
             for i, (x, _, padding_mask) in enumerate(self.predict_dataloader):
-                x = x.float().to(self.device)  # (batch_size, seq_len, num_features)
-                padding_mask = padding_mask.float().to(self.device)  # (batch_size, seq_len)
-                x_hat, _, _ = self.model(x)  # (batch_size, seq_len, num_features)
+                x = x.float().to(self.device)
+                padding_mask = padding_mask.float().to(self.device)
+                x_orig, x_hat, s_orig, s_hat, _ = self.model(x)
 
-                # (batch_size, seq_len) 特征维度上取均值(TODO: 统一时刻所有变量都被判为异常?)
-                time_score = torch.mean(self.time_anomaly_criterion(x_hat, x), dim=-1)
-                # TODO: 时域重构结果放进频域异常评判标准?
-                freq_score = torch.mean(self.freq_anomaly_criterion(x_hat, x), dim=-1)
+                # (batch_size, seq_len) 特征维度上取均值 NOTE: 统一时刻所有变量都被判为异常
+                # 时间域分数
+                time_score = torch.mean(self.time_anomaly_criterion(x_hat, x_orig), dim=-1)
 
-                # Apply padding mask to zero out the scores from padded regions
-                score = (time_score + self.freq_score_lambda * freq_score) * padding_mask
-                score = score.detach().cpu().numpy()
-                batch_anomaly_scores.append(score)
+                # 尺度域分数
+                scale_score = torch.mean(self.scale_anomaly_criterion(s_hat, s_orig), dim=-1)
 
-                print(
-                    f"Batch [{i+1}/{len(self.predict_dataloader)}], "
-                    f"testing time loss: {time_score.detach().cpu().numpy()[0, :5]}, "
-                    f"testing fre loss: {freq_score.detach().cpu().numpy()[0, :5]}"
-                )
+                score = (time_score + self.scale_score_lambda * scale_score) * padding_mask
 
-        # shape (batch_size * seq_len,) 虽然是非重叠窗口
-        # 但也不一定等于 test_data 的 num_samples? TODO: 考虑对最后一个窗口 padding 还是丢弃?
+                batch_anomaly_scores.append(score.cpu().numpy())
+
         anomaly_scores = np.concatenate(batch_anomaly_scores, axis=0).reshape(-1)
-        anomaly_scores = np.array(anomaly_scores)[: len(data)]
-
-        # 打印最大值, 最小值, 均值
-        print(
-            f"Anomaly scores: max: {np.max(anomaly_scores)}, min: {np.min(anomaly_scores)}, mean: {np.mean(anomaly_scores)}"
-        )
-        return anomaly_scores
+        return anomaly_scores[: len(data)]
 
     def find_anomalies(self, data: np.ndarray):
         if not self.fitted:
             raise ValueError("Please fit the model first!")
 
-        self.test_dataloader = get_dataloader(
-            stage="test",
-            data=data,
-            batch_size=self.batch_size,
-            window_size=self.seq_len,
-            step_size=1,
-            shuffle=False,
-            transform=self.transform,
-            target_transform=self.transform,
-        )
+        # 1. 获取测试数据的异常分数
+        print("Scoring anomalies on the test data...")
+        test_scores = self.score_anomalies(data)
 
-        self.predict_dataloader = get_dataloader(
-            stage="predict",
-            data=data,
-            batch_size=self.batch_size,
-            window_size=self.seq_len,
-            step_size=self.seq_len,  # NOTE: 非重叠窗口
-            shuffle=False,
-            transform=self.transform,
-            target_transform=self.transform,
-        )
+        # 2. 高效地计算阈值
+        # 不再遍历整个训练集，而是使用验证集的分数来估计正常分数的分布。
+        # 验证集未经训练，可以较好地代表正常数据的分布。
+        print("Calculating threshold on the validation data...")
+        val_scores = self.score_anomalies(self.val_dataloader.dataset.windows)
 
-        self.model.to(self.device)
-        self.model.eval()
+        # 3. 确定阈值并进行预测
+        threshold = np.percentile(val_scores, 100 - self.anomaly_ratio)
+        print(f"Anomaly threshold determined: {threshold:.6f}")
 
-        # --------------- 阈值计算(基于训练集和测试集) ---------------
-        attens_energy = []
+        predictions = (test_scores > threshold).astype(int)
 
-        with torch.no_grad():
-            for z, _ in self.train_dataloader:  # NOTE: train_dataloader
-                z = z.float().to(self.device)
-                z_hat, _, _ = self.model(z)
-
-                time_score = torch.mean(self.time_anomaly_criterion(z_hat, z), dim=-1)
-                freq_score = torch.mean(self.freq_anomaly_criterion(z_hat, z), dim=-1)
-
-                score = (time_score + self.freq_score_lambda * freq_score).detach().cpu().numpy()
-                attens_energy.append(score)
-
-        # (batch_size * seq_len,) 远大于 train_data 的 num_samples, 因为步长为 1
-        attens_energy = np.concatenate(attens_energy, axis=0).reshape(-1)
-        train_energy = np.array(attens_energy)
-
-        attens_energy = []
-
-        with torch.no_grad():
-            for z, _ in self.test_dataloader:  # NOTE: test_dataloader
-                z = z.float().to(self.device)
-                z_hat, _, _ = self.model(z)
-
-                time_score = torch.mean(self.time_anomaly_criterion(z_hat, z), dim=-1)
-                freq_score = torch.mean(self.freq_anomaly_criterion(z_hat, z), dim=-1)
-
-                score = (time_score + self.freq_score_lambda * freq_score).detach().cpu().numpy()
-                attens_energy.append(score)
-
-        # (batch_size * seq_len,)
-        attens_energy = np.concatenate(attens_energy, axis=0).reshape(-1)
-        test_energy = np.array(attens_energy)
-
-        combined_energy = np.concatenate([train_energy, test_energy], axis=0)
-
-        attens_energy = []
-        with torch.no_grad():
-            for i, (z, _, padding_mask) in enumerate(self.predict_dataloader):
-                z = z.float().to(self.device)
-                padding_mask = padding_mask.float().to(self.device)
-                z_hat, _, _ = self.model(z)
-
-                time_score = torch.mean(self.time_anomaly_criterion(z_hat, z), dim=-1)
-                freq_score = torch.mean(self.freq_anomaly_criterion(z_hat, z), dim=-1)
-
-                score = (time_score + self.freq_score_lambda * freq_score) * padding_mask
-                score = score.detach().cpu().numpy()
-                attens_energy.append(score)
-
-                print(
-                    f"Batch [{i+1}/{len(self.predict_dataloader)}], "
-                    f"testing time loss: {time_score.detach().cpu().numpy()[0, :5]}, "
-                    f"testing fre loss: {freq_score.detach().cpu().numpy()[0, :5]}"
-                )
-
-        attens_energy = np.concatenate(attens_energy, axis=0).reshape(-1)
-        predict_energy = np.array(attens_energy)
-
-        if not isinstance(self.anomaly_ratio, List):
-            self.anomaly_ratio = [self.anomaly_ratio]
-
-        predictions = {}
-        for ratio in self.anomaly_ratio:
-            threshold = np.percentile(combined_energy, 100 - ratio)
-            predictions[ratio] = np.where(predict_energy > threshold, 1, 0)
-
-        # Remove padding from predictions
-        for ratio in self.anomaly_ratio:
-            predictions[ratio] = predictions[ratio][: len(data)]
-
-        return predictions
+        # 同时返回预测的0/1标签和每个点的具体分数，方便后续评估（如计算AUC）
+        return predictions, test_scores
 
 
 def catch_score_anomalies(data: np.ndarray, config: Dict[str, Any]) -> np.ndarray:

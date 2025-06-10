@@ -3,7 +3,7 @@
 # ----------------------------------------
 
 [anomaly_detection]
-freq_score_lambda = 0.05                   # 评分函数中频域分数权重
+scale_score_lambda = 0.05                  # 评分函数中尺度域分数权重
 anomaly_ratio = [2.0, 4.0, 6.0, 8.0, 10.0] # 异常率 x %
 
 

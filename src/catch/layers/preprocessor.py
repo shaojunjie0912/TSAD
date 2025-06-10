@@ -129,12 +129,11 @@ class RevIN(nn.Module):
         """
         if mode == "norm":
             self._get_statistics(x)
-            x = self._normalize(x)
+            return self._normalize(x)
         elif mode == "denorm":
-            x = self._denormalize(x)
+            return self._denormalize(x)
         elif mode == "transform":
-            x = self._normalize(x)
-        return x
+            return self._normalize(x)
 
     def _init_params(self):
         self.affine_weight = nn.Parameter(torch.ones(self.num_features))

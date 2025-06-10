@@ -96,7 +96,7 @@ class CATCH(nn.Module):
 
     def forward(
         self, x: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
         """_summary_
 
         Args:
@@ -105,6 +105,7 @@ class CATCH(nn.Module):
         Returns:
             Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]: [时域重构结果, 频域重构结果, 动态对比损失]
         """
+        x_original = x.clone()
         B = x.size(0)
         # ---------------------------------------------
         # ---------------- 前向模块 (FM) --------------
@@ -114,17 +115,17 @@ class CATCH(nn.Module):
 
         # patching 小波变换 -> (B * patch_num, Extd_C, patch_size)
         # Extd_C = C * (L + 1)
-        original_coeffs, z_cat = self.patcher(x_norm)
+        original_coeffs, z_out = self.patcher(x_norm)
 
         # ------------------------------------------------------
         # ---------------- 通道融合模块 (CFM) ------------------
         # ------------------------------------------------------
 
         # 通道掩码矩阵 (B * patch_num, Extd_C, Extd_C)
-        channel_mask = self.masker(z_cat)
+        channel_mask = self.masker(z_out)
 
         # z_hat: (B * patch_num, Extd_C, d_model)
-        z_hat, ccd_loss = self.channel_masked_transformer(z_cat, channel_mask)
+        z_hat, ccd_loss = self.channel_masked_transformer(z_out, channel_mask)
 
         # -------------------------------------------------
         # ------------ 时尺重构模块 (TSRM) ----------------
@@ -151,6 +152,7 @@ class CATCH(nn.Module):
         # reconstructed_coeffs: 尺度域重构值 (B, T, Extd_C)
         # ccd_loss: 通道相关性发掘损失
         return (
+            x_original,
             x_hat,
             original_coeffs.permute(0, 2, 1),
             reconstructed_coeffs.permute(0, 2, 1),
