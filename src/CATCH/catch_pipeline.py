@@ -7,7 +7,7 @@ from torch.optim import lr_scheduler
 
 from .model.catch import CATCH
 from .utils.data import Normalizer, get_dataloader, get_train_val_dataloader
-from .utils.tools import EarlyStopping, adjust_learning_rate
+from .utils.early_stopping import EarlyStopping
 
 
 class CATCHPipeline(nn.Module):
@@ -34,14 +34,14 @@ class CATCHPipeline(nn.Module):
         self.seq_len: int = self.data_config["seq_len"]
 
         # anomaly detection  # NOTE: 保留所有位置 square error
+        # TODO: 时间域 + 尺度域异常评分标准
         self.time_anomaly_criterion = nn.MSELoss(reduction="none")
+        self.freq_anomaly_criterion = nn.MSELoss(reduction="none")
 
         self.fitted: bool = False
 
     # train + val
     def fit(self, data: np.ndarray):
-        # Enable anomaly detection during debugging
-        torch.autograd.set_detect_anomaly(True)
         self.normalizer = Normalizer()
         self.normalizer.fit(data)
         self.transform = self.normalizer.as_transform()
@@ -88,63 +88,45 @@ class CATCHPipeline(nn.Module):
         self.model.to(self.device)
 
         self.early_stopping = EarlyStopping(
-            patience=self.training_config["patience"],
+            patience=self.training_config["es_patience"],
+            delta=self.training_config["es_delta"],
+            mode="min",
             verbose=True,
         )
 
         train_steps = len(self.train_dataloader)
-        main_params = [
-            param for name, param in self.model.named_parameters() if "mask_generator" not in name
-        ]
-        mask_params = self.model.masker.parameters()
 
-        # 创建优化器 (NOTE: learning rate 会在 OneCycleLR 中更新)
-        self.main_optimizer = torch.optim.Adam(
-            main_params, lr=self.training_config["learning_rate"]
-        )
-        self.mask_optimizer = torch.optim.Adam(
-            mask_params, lr=self.training_config["mask_learning_rate"]
+        # NOTE: 一个优化器
+        self.optimizer = torch.optim.Adam(
+            self.model.parameters(), lr=self.training_config["learning_rate"]
         )
 
-        # 创建学习率调度器
-        # HACK: 100 只是占位, trainer 中会更新
-        # NOTE: steps_per_epoch 不指定则相当于 num_batch
-        main_scheduler = lr_scheduler.OneCycleLR(
-            optimizer=self.main_optimizer,
+        # NOTE: 一个调度器
+        self.scheduler = lr_scheduler.OneCycleLR(
+            optimizer=self.optimizer,
             steps_per_epoch=train_steps,
             epochs=self.training_config["num_epochs"],
             pct_start=self.training_config["pct_start"],
             max_lr=self.training_config["learning_rate"],
         )
-        mask_scheduler = lr_scheduler.OneCycleLR(
-            optimizer=self.mask_optimizer,
-            steps_per_epoch=train_steps,
-            epochs=self.training_config["num_epochs"],
-            pct_start=self.training_config["pct_start"],
-            max_lr=self.training_config["mask_learning_rate"],
-        )
 
-        # 开始手写训练循环
+        # ----------------------------------------
+        # ----------------- 训练 -----------------
+        # ----------------------------------------
         for epoch_idx in range(self.training_config["num_epochs"]):
-            self.model.train()  #  将模型设置为训练模式
+            self.model.train()
             train_loss = []
-            step = min(int(train_steps / 10), 100)  #
+
             for i, (x, _) in enumerate(self.train_dataloader):
-                self.main_optimizer.zero_grad()  # 主优化器梯度清零
+                self.optimizer.zero_grad()  # 梯度清零
 
                 x = x.float().to(self.device)
 
                 x_hat, s, s_hat, ccd_loss = self.model(x)
 
-                # ------------- 计算损失 -------------
-
-                # 时域重建损失
+                # --- 计算总损失 ---
                 time_rec_loss = self.time_loss_fn(x_hat, x)
-
-                # 尺度域重建损失
                 scale_rec_loss = self.scale_loss_fn(s_hat, s)
-
-                # 总损失 = 时域重建损失 + 频域重建损失 + 动态对比损失
                 loss = (
                     time_rec_loss
                     + self.scale_loss_lambda * scale_rec_loss
@@ -152,67 +134,41 @@ class CATCHPipeline(nn.Module):
                 )
                 train_loss.append(loss.item())
 
-                if (i + 1) % step == 0:
-                    self.mask_optimizer.step()  # 更新 mask 优化器
-                    self.mask_optimizer.zero_grad()  # mask 优化器梯度清零
-
-                if (i + 1) % step == 100:
-                    print(
-                        f"Epoch [{epoch_idx+1}/{self.training_config['num_epochs']}], "
-                        f"Batch [{i+1}/{len(self.train_dataloader)}], "
-                        f"time rec loss: {time_rec_loss.item():.4f}, "
-                        f"scale rec loss: {scale_rec_loss.item():.4f}, "
-                        f"ccd loss: {ccd_loss.item():.4f}"
-                    )
-
+                # --- 反向传播与更新 ---
                 loss.backward()
-                self.main_optimizer.step()
+                self.optimizer.step()
 
-            train_loss = np.mean(train_loss)
+                # 在每个 batch 后更新学习率
+                self.scheduler.step()
+
+            # --- Epoch 结束后的验证与打印 ---
+            train_loss_avg = np.mean(train_loss)
             valid_loss = self.validate(self.val_dataloader, self.time_loss_fn)
             print(
                 f"Epoch [{epoch_idx+1}/{self.training_config['num_epochs']}], "
-                f"Train loss: {train_loss:.4f}, "
-                f"Valid loss: {valid_loss:.4f}"
+                f"Train Loss: {train_loss_avg:.6f}, Valid Loss: {valid_loss:.6f}, "
+                f"LR: {self.optimizer.param_groups[0]['lr']:.6f}"
             )
 
-            # 早停
-            self.early_stopping(valid_loss, self.model)
-            if self.early_stopping.early_stop:
-                print("Early stopping")
+            if self.early_stopping.should_stop:
+                print("Early stopping triggered. Loading best model weights.")
+                # 在中断循环前，自动加载性能最佳的模型权重
+                self.early_stopping.load_best_weights(self.model)
                 break
 
-            adjust_learning_rate(
-                self.main_optimizer,
-                mask_scheduler,
-                epoch_idx + 1,
-                self.training_config["lr_adj"],
-                self.training_config["learning_rate"],
-            )
-            adjust_learning_rate(
-                self.mask_optimizer,
-                main_scheduler,
-                epoch_idx + 1,
-                self.training_config["lr_adj"],
-                self.training_config["mask_learning_rate"],  # TODO: 原 CACTH 中是 learning_rate
-            )
         self.fitted = True
 
     def validate(self, val_dataloader, loss_fn):
-        total_loss = []
         self.model.eval()  # NOTE: 将模型设置为评估模式
-
+        total_loss = []
         with torch.no_grad():
             for x, _ in val_dataloader:
                 x = x.float().to(self.device)
                 x_hat, _, _, _ = self.model(x)
-                # TODO: 验证时只看时域重构损失?
-                loss = loss_fn(x_hat, x).detach().cpu().numpy()
+                loss = loss_fn(x_hat, x).item()  # TODO: 验证时只看时域重构损失?
                 total_loss.append(loss)
-
-        total_loss = np.mean(total_loss)
         self.model.train()  # NOTE: 重设回训练模式
-        return total_loss
+        return np.mean(total_loss)
 
     def score_anomalies(self, data: np.ndarray) -> np.ndarray:
         """_summary_
@@ -240,7 +196,6 @@ class CATCHPipeline(nn.Module):
             transform=self.transform,
             target_transform=self.transform,  # NOTE: 重构 X=Y 因此相同处理
         )
-        self.model.load_state_dict(self.early_stopping.check_point)
         self.model.to(self.device)
         self.model.eval()
 
@@ -281,8 +236,6 @@ class CATCHPipeline(nn.Module):
     def find_anomalies(self, data: np.ndarray):
         if not self.fitted:
             raise ValueError("Please fit the model first!")
-
-        self.model.load_state_dict(self.early_stopping.check_point)
 
         self.test_dataloader = get_dataloader(
             stage="test",
