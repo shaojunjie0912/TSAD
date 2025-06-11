@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Union
+from typing import Any, Dict
 
 import numpy as np
 import torch
@@ -6,7 +6,7 @@ import torch.nn as nn
 from torch.optim import lr_scheduler
 
 from .model.catch import CATCH
-from .utils.data import Normalizer, get_dataloader, get_train_val_dataloader
+from .utils.data import get_dataloader
 from .utils.early_stopping import EarlyStopping
 
 
@@ -28,7 +28,7 @@ class CATCHPipeline(nn.Module):
 
         self.anomaly_config = config["anomaly_detection"]
         self.scale_score_lambda = self.anomaly_config["scale_score_lambda"]
-        self.anomaly_ratio: Union[List[float], float] = self.anomaly_config["anomaly_ratio"]
+        self.anomaly_ratio: float = self.anomaly_config["anomaly_ratio"]
 
         self.batch_size: int = self.training_config["batch_size"]
         self.seq_len: int = self.data_config["seq_len"]
@@ -42,13 +42,33 @@ class CATCHPipeline(nn.Module):
 
     # train + val
     def fit(self, data: np.ndarray):
-        # TODO: 删除了 Normalizer
-        self.train_dataloader, self.val_dataloader = get_train_val_dataloader(
-            data=data,
-            train_rate=0.8,
+        train_ratio = self.data_config["train_ratio"]
+        len_train = int(len(data) * train_ratio)
+
+        train_data = data[:len_train]
+        val_data = data[len_train:]
+
+        # NOTE: 将原始验证集保存为实例属性
+        self.val_data = val_data
+
+        self.train_dataloader = get_dataloader(
+            stage="train",
+            data=train_data,
             batch_size=self.batch_size,
             window_size=self.seq_len,
             step_size=1,
+            shuffle=True,
+            transform=None,
+            target_transform=None,
+        )
+
+        self.val_dataloader = get_dataloader(
+            stage="val",
+            data=val_data,
+            batch_size=self.batch_size,
+            window_size=self.seq_len,
+            step_size=1,
+            shuffle=False,
             transform=None,
             target_transform=None,
         )
@@ -218,7 +238,7 @@ class CATCHPipeline(nn.Module):
         # 不再遍历整个训练集，而是使用验证集的分数来估计正常分数的分布。
         # 验证集未经训练，可以较好地代表正常数据的分布。
         print("Calculating threshold on the validation data...")
-        val_scores = self.score_anomalies(self.val_dataloader.dataset.windows)
+        val_scores = self.score_anomalies(self.val_data)
 
         # 3. 确定阈值并进行预测
         threshold = np.percentile(val_scores, 100 - self.anomaly_ratio)
@@ -241,12 +261,12 @@ def catch_score_anomalies(data: np.ndarray, config: Dict[str, Any]) -> np.ndarra
     return scores
 
 
-def catch_find_anomalies(data: np.ndarray, config: Dict[str, Any]) -> Dict[float, np.ndarray]:
+def catch_find_anomalies(data: np.ndarray, config: Dict[str, Any]) -> np.ndarray:
     """
     找到异常点
     """
     pipeline = CATCHPipeline(config)
     pipeline.fit(data)
-    predictions = pipeline.find_anomalies(data)
+    predictions, scores = pipeline.find_anomalies(data)
 
     return predictions

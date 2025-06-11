@@ -4,7 +4,7 @@ from typing import Any, Dict
 
 import pandas as pd
 
-from CATCH.catch_pipeline import catch_find_anomalies, catch_score_anomalies
+from catch.catch_pipeline import catch_find_anomalies, catch_score_anomalies
 from tools.plot import plot_anomaly_labels, plot_anomaly_scores
 
 

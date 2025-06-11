@@ -3,8 +3,8 @@
 # ----------------------------------------
 
 [anomaly_detection]
-scale_score_lambda = 0.05                  # 评分函数中尺度域分数权重
-anomaly_ratio = [2.0, 4.0, 6.0, 8.0, 10.0] # 异常率 x %
+scale_score_lambda = 0.05 # 评分函数中尺度域分数权重
+anomaly_ratio = 5.0       # 异常率 x %
 
 
 # ----------------------------------------  
@@ -12,6 +12,7 @@ anomaly_ratio = [2.0, 4.0, 6.0, 8.0, 10.0] # 异常率 x %
 # ----------------------------------------
 
 [data]
+train_ratio = 0.8 # 训练集比例
 # NOTE: (seq_len - patch_size) % patch_stride == 0 确保覆盖 window 中所有数据
 seq_len = 16               # 滑窗大小 (即 window_size) (时域 -> 频域)
 patch_size = 4             # 滑窗内 patch 大小 (将 seq_len 长度的 window 再分成 patch_size 大小的块, )

@@ -56,7 +56,7 @@ def plot_anomaly_scores(
 
 def plot_anomaly_labels(
     data: pd.DataFrame,
-    predictions: Dict[float, np.ndarray],
+    predictions: np.ndarray,
     results_dir: str,
     dataset_name: str,
     algorithm_name: str,
@@ -65,34 +65,30 @@ def plot_anomaly_labels(
     original_color = "#4a6fa5"  # 深灰蓝，低调高级
     error_color = "#e76f51"  # 柔和珊瑚红
 
-    for ratio, pred in predictions.items():
-        fig, axes = plt.subplots(num_features, 1, figsize=(15, 3 * num_features), sharex=True)
-        fig.suptitle(f"Anomalies with ratio: {ratio}")
+    fig, axes = plt.subplots(num_features, 1, figsize=(15, 3 * num_features), sharex=True)
+    fig.suptitle(f"Anomalies")
 
-        # 获取异常时刻的索引
-        anomaly_labels = np.where(pred == 1)[0]
+    # 获取异常时刻的索引
+    anomaly_labels = np.where(predictions == 1)[0]
 
-        # 绘制每个变量的时序图
-        for i, col in enumerate(data.columns):
-            ax = axes[i]
-            # 使用data的index作为x轴
-            ax.plot(data.index, data[col], label=col, color=original_color, linewidth=1.5)
+    # 绘制每个变量的时序图
+    for i, col in enumerate(data.columns):
+        ax = axes[i]
+        # 使用data的index作为x轴
+        ax.plot(data.index, data[col], label=col, color=original_color, linewidth=1.5)
 
-            # 在每个异常时刻画一条垂直的红线
-            for idx in anomaly_labels:
-                ax.axvline(
-                    x=data.index[idx], color=error_color, alpha=0.3, linestyle="-", linewidth=1
-                )
+        # 在每个异常时刻画一条垂直的红线
+        for idx in anomaly_labels:
+            ax.axvline(x=data.index[idx], color=error_color, alpha=0.3, linestyle="-", linewidth=1)
 
-            ax.set_ylabel(col)
-            ax.legend(loc="upper right")
+        ax.set_ylabel(col)
+        ax.legend(loc="upper right")
 
-        plt.xlabel("Time")
-        plt.tight_layout()
+    plt.xlabel("Time")
+    plt.tight_layout()
 
-        path = f"{results_dir}/{dataset_name}/{algorithm_name}/anomaly_labels"
-        if not os.path.exists(path):
-            os.makedirs(path)
-
-        plt.savefig(f"{path}/{ratio}.png", dpi=400, bbox_inches="tight")
-        plt.close()
+    path = f"{results_dir}/{dataset_name}/{algorithm_name}/anomaly_labels"
+    if not os.path.exists(path):
+        os.makedirs(path)
+    plt.savefig(f"{path}/anomaly_labels.png", dpi=400, bbox_inches="tight")
+    plt.close()

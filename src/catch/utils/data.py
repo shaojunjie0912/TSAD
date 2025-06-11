@@ -21,50 +21,6 @@ from torch.utils.data import DataLoader, Dataset
 # 对于一个自定义大小的 window 窗口再 patching 时, 此时已经知道了 N, 那么可以人为设置好 W 和 S, 以确保覆盖所有数据
 
 
-def get_train_val_dataloader(
-    data: np.ndarray,
-    train_rate: float,
-    batch_size: int,
-    window_size: int,
-    step_size: int = 1,
-    transform: Optional[Any] = None,
-    target_transform: Optional[Any] = None,
-):
-    """
-    将数据划分为 train 和 val, 然后返回两个对应的 DataLoader
-    """
-    assert 0 < train_rate < 1, "train_rate 必须在 (0, 1) 之间"
-    num_total = len(data)
-    num_train = int(num_total * train_rate)
-
-    train_data = data[:num_train]
-    val_data = data[num_train:]
-
-    train_loader = get_dataloader(
-        data=train_data,
-        batch_size=batch_size,
-        window_size=window_size,
-        step_size=step_size,
-        stage="train",
-        shuffle=True,
-        transform=transform,
-        target_transform=target_transform,
-    )
-
-    val_loader = get_dataloader(
-        data=val_data,
-        batch_size=batch_size,
-        window_size=window_size,
-        step_size=step_size,
-        stage="val",
-        shuffle=False,
-        transform=transform,
-        target_transform=target_transform,
-    )
-
-    return train_loader, val_loader
-
-
 def get_dataloader(
     stage: str,
     data: np.ndarray,
@@ -78,13 +34,6 @@ def get_dataloader(
 ):
     # predict 阶段需要 padding!!
     if stage == "predict":
-        # dataset = SlidingWindowDatasetNoPadding(
-        #     data=data,
-        #     window_size=window_size,
-        #     step_size=step_size,
-        #     transform=transform,
-        #     target_transform=target_transform,
-        # )
         dataset = SlidingWindowDatasetWithPadding(
             data=data,
             window_size=window_size,
@@ -173,7 +122,12 @@ class SlidingWindowDatasetWithPadding(Dataset):
 # NoPadding Dataset: 用于训练、验证、测试
 class SlidingWindowDatasetNoPadding(Dataset):
     def __init__(
-        self, data: np.ndarray, window_size: int, step_size: int = 1, transform=None, target_transform=None
+        self,
+        data: np.ndarray,
+        window_size: int,
+        step_size: int = 1,
+        transform=None,
+        target_transform=None,
     ):
         self.data = data.astype(np.float32)
         self.window_size = window_size
