@@ -9,6 +9,8 @@ dependencies = [
     "matplotlib>=3.10.3",
     "pandas>=2.2.3",
     "ptwt>=0.1.9",
+    "scikit-learn>=1.7.0",
     "scipy>=1.15.3",
+    "statsmodels>=0.14.4",
     "torch==2.5.0",
 ]

@@ -6,8 +6,7 @@ import torch.nn as nn
 from torch.optim import lr_scheduler
 
 from .model.catch import CATCH
-from .utils.data import get_dataloader
-from .utils.early_stopping import EarlyStopping
+from .utils.training import EarlyStopping, get_dataloader
 
 
 class CATCHPipeline(nn.Module):
