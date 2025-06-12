@@ -1,0 +1,79 @@
+# ----------------------------------------
+# --------- 异常检测配置 ----------------
+# ----------------------------------------
+
+[anomaly_detection]
+scale_score_lambda = 0.05 # 评分函数中尺度域分数权重
+anomaly_ratio = 5.0       # 异常率 x %
+
+
+# ----------------------------------------  
+# ------------- 数据处理 -----------------
+# ----------------------------------------
+
+[data]
+train_ratio = 0.8 # 训练集比例
+# NOTE: (seq_len - patch_size) % patch_stride == 0 确保覆盖 window 中所有数据
+seq_len = 16               # 滑窗大小 (即 window_size) (时域 -> 频域)
+patch_size = 4             # 滑窗内 patch 大小 (将 seq_len 长度的 window 再分成 patch_size 大小的块, )
+patch_stride = 2           # 滑窗内 patch 步长
+inference_patch_size = 8   # 推理阶段分块大小 (频域)
+inference_patch_stride = 1 # 推理阶段分块滑动步长 (频域)
+
+
+# ----------------------------------------
+# ----------- 模型 (前向模块) ------------
+# ----------------------------------------
+
+[model.FM]
+affine = false        # RevIN affine参数
+subtract_last = false # RevIN 减去最后值
+level = 3             # 小波分解层数
+wavelet = "db4"       # 小波类型
+mode = "symmetric"    # 小波分解模式
+
+
+# ----------------------------------------
+# --------- 模型 (通道融合模块) ----------
+# ----------------------------------------
+
+[model.CFM]
+num_layers = 3 # Transformer 编码器层数
+d_cf = 64      # 内部特征维度(cf: channel-frequency), Transformer 编码器处理特征的维度(嵌入维度?)
+d_model = 128  # 输出维度
+num_heads = 2  # 多头注意力头数
+d_head = 64    # 注意力头维度
+d_ff = 256     # 前馈网络的隐藏层维度
+dropout = 0.2  # Transformer dropout 率
+
+# ----------------------------------------
+# --------- 模型 (时尺重构模块) ----------
+# ----------------------------------------
+
+[model.TSRM]
+is_flatten_individual = false # 是否为每个通道使用独立处理网络
+rec_head_dropout = 0.1        # 解码器头部 dropout 率
+
+# ----------------------------------------
+# ------------- 训练配置 -----------------
+# ----------------------------------------
+
+[training]
+batch_size = 32        # 批量大小
+num_epochs = 30        # 训练轮次
+learning_rate = 0.0001 # 学习率
+pct_start = 0.3        # 学习率预热比例
+es_patience = 3        # 早停策略的耐心值
+es_delta = 0.001       # 最小变化量
+
+
+# ----------------------------------------
+# ------------- 损失函数 -----------------
+# ----------------------------------------
+
+[loss]
+ccd_align_temperature = 0.1
+ccd_regular_lambda = 0.1
+ccd_align_lambda = 1.0
+scale_loss_lambda = 0.005   # 尺度域辅助损失权重
+ccd_loss_lambda = 0.005     # 通道相关性发掘损失权重

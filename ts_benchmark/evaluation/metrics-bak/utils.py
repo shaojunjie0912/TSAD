@@ -68,8 +68,8 @@ def get_list_anomaly(labels: np.ndarray) -> List[int]:
     # return results
 
     end_pos = np.diff(np.array(labels, dtype=int), append=0) < 0
-    return np.diff(np.cumsum(labels)[end_pos], prepend=0)
+    return np.diff(np.cumsum(labels)[end_pos], prepend=0).tolist()
 
 
-# label = [1,1,1,0,0,0,1,1,0,0,0,1,1,1,0]
-# print(get_list_anomaly(label))
+label = np.array([1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 1, 0])
+print(get_list_anomaly(label))

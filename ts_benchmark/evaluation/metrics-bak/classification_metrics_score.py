@@ -1,7 +1,3 @@
-# -*- coding: utf-8 -*-
-
-from typing import Any, Tuple
-
 import numpy as np
 from sklearn import metrics
 from sklearn.metrics import precision_recall_curve
