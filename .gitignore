@@ -1,6 +1,5 @@
-*.csv
-*.txt
-*.png
+datasets/
+results/
 
 __pycache__/
 .venv/
