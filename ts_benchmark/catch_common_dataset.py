@@ -25,6 +25,7 @@ if __name__ == "__main__":
 
     data = df.iloc[:, :-1]
     labels = df.iloc[:, -1].to_numpy()
+    print(len(labels))
     scores = catch_score_anomalies(data=data.values, config=catch_config)
     np.savetxt("scores.csv", scores, delimiter=",", fmt="%.6f")
     print(auc_roc(labels, scores))

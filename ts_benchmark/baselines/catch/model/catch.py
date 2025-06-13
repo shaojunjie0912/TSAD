@@ -113,9 +113,7 @@ class RevIN(nn.Module):
         if self.affine:
             self._init_params()
 
-    def forward(
-        self, x: torch.Tensor, mode: Literal["norm", "denorm", "transform"]
-    ) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, mode: Literal["norm", "denorm", "transform"]) -> torch.Tensor:
         """
 
         Args:
@@ -342,15 +340,10 @@ class CATCH(nn.Module):
         x_hat_norm = x_hat_norm.permute(0, 2, 1)
         x_hat = self.revin_layer(x_hat_norm, "denorm")  # 逆实例归一化
 
-        # x: 时间域原始值 (B, T, C)
-        # x_hat: 时间域重构值 (B, T, C)
-        # original_coeffs: 尺度域原始值 (B, T, Extd_C)
-        # reconstructed_coeffs: 尺度域重构值 (B, T, Extd_C)
-        # ccd_loss: 通道相关性发掘损失
         return (
-            x_original,
-            x_hat,
-            original_coeffs.permute(0, 2, 1),
-            reconstructed_coeffs.permute(0, 2, 1),
-            ccd_loss,
+            x_original,  # x: 时间域原始值 (B, T, C)
+            x_hat,  # x_hat: 时间域重构值 (B, T, C)
+            original_coeffs.permute(0, 2, 1),  # original_coeffs: 尺度域原始值 (B, T, Extd_C)
+            reconstructed_coeffs.permute(0, 2, 1),  # reconstructed_coeffs: 尺度域重构值 (B, T, Extd_C)
+            ccd_loss,  # ccd_loss: 通道相关性发掘损失
         )

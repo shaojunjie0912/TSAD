@@ -57,12 +57,12 @@ rec_head_dropout = 0.1        # 解码器头部 dropout 率
 # ----------------------------------------
 
 [training]
-batch_size = 32       # 批量大小
-num_epochs = 30       # 训练轮次
-learning_rate = 0.001 # 学习率
-pct_start = 0.3       # 学习率预热比例
-es_patience = 10      # 早停策略的耐心值
-es_delta = 0.001      # 最小变化量
+batch_size = 128       # 批量大小
+num_epochs = 20        # 训练轮次
+learning_rate = 0.0001 # 学习率
+pct_start = 0.3        # 学习率预热比例
+es_patience = 10       # 早停策略的耐心值
+es_delta = 0.001       # 最小变化量
 
 
 # ----------------------------------------
@@ -73,5 +73,5 @@ es_delta = 0.001      # 最小变化量
 ccd_align_temperature = 0.1
 ccd_regular_lambda = 0.1
 ccd_align_lambda = 1.0
-scale_loss_lambda = 0.5     # 尺度域辅助损失权重
-ccd_loss_lambda = 0.5       # 通道相关性发掘损失权重
+scale_loss_lambda = 0.1     # 尺度域辅助损失权重
+ccd_loss_lambda = 0.1       # 通道相关性发掘损失权重

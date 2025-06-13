@@ -309,9 +309,7 @@ class EarlyStopping:
         if self.ckpt_path:
             torch.save(model.state_dict(), self.ckpt_path)
         else:
-            state_dict = (
-                model.module.state_dict() if hasattr(model, "module") else model.state_dict()
-            )
+            state_dict = model.module.state_dict() if hasattr(model, "module") else model.state_dict()
             self._best_state_dict = copy.deepcopy(state_dict)
 
         if self.verbose:

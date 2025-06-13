@@ -114,9 +114,7 @@ class CATCHPipeline(nn.Module):
         train_steps = len(self.train_dataloader)
 
         # NOTE: 一个优化器
-        self.optimizer = torch.optim.Adam(
-            self.model.parameters(), lr=self.training_config["learning_rate"]
-        )
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.training_config["learning_rate"])
 
         # NOTE: 一个调度器
         self.scheduler = lr_scheduler.OneCycleLR(
@@ -145,9 +143,7 @@ class CATCHPipeline(nn.Module):
                 time_rec_loss = self.time_loss_fn(x_hat, x_orig)
                 scale_rec_loss = self.scale_loss_fn(s_hat, s)
                 loss = (
-                    time_rec_loss
-                    + self.scale_loss_lambda * scale_rec_loss
-                    + self.ccd_loss_lambda * ccd_loss
+                    time_rec_loss + self.scale_loss_lambda * scale_rec_loss + self.ccd_loss_lambda * ccd_loss
                 )
                 train_loss.append(loss.item())
 
@@ -211,10 +207,10 @@ class CATCHPipeline(nn.Module):
                 padding_mask = padding_mask.float().to(self.device)
                 x_orig, x_hat, s_orig, s_hat, _ = self.model(x)
 
-                # (batch_size, seq_len) 特征维度上取均值 NOTE: 统一时刻所有变量都被判为异常
+                # -> (B, T)
+                # 特征维度上取均值 NOTE: 统一时刻所有变量都被判为异常
                 # 时间域分数
                 time_score = torch.mean(self.time_anomaly_criterion(x_hat, x_orig), dim=-1)
-
                 # 尺度域分数
                 scale_score = torch.mean(self.scale_anomaly_criterion(s_hat, s_orig), dim=-1)
 
