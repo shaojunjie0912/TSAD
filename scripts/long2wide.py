@@ -27,8 +27,7 @@ def process_data_df(input_path: str, output_path: str, nrows=None):
     if columns[0] == "date" and not is_univariate:
         df["date"] = data.iloc[:n_points, 0]
         col_data = {
-            cols_name[j]: data.iloc[j * n_points : (j + 1) * n_points, 1].tolist()
-            for j in range(n_cols)
+            cols_name[j]: data.iloc[j * n_points : (j + 1) * n_points, 1].tolist() for j in range(n_cols)
         }
         df = pd.concat([df, pd.DataFrame(col_data)], axis=1)
         df["date"] = pd.to_datetime(df["date"])
@@ -36,8 +35,7 @@ def process_data_df(input_path: str, output_path: str, nrows=None):
 
     elif columns[0] != "date" and not is_univariate:
         col_data = {
-            cols_name[j]: data.iloc[j * n_points : (j + 1) * n_points, 0].tolist()
-            for j in range(n_cols)
+            cols_name[j]: data.iloc[j * n_points : (j + 1) * n_points, 0].tolist() for j in range(n_cols)
         }
         df = pd.concat([df, pd.DataFrame(col_data)], axis=1)
 
@@ -86,4 +84,4 @@ def batch_convert_directory(input_dir, output_dir, suffix="_wide"):
 
 
 if __name__ == "__main__":
-    batch_convert_directory("long_data", "wide_data", suffix="")
+    batch_convert_directory("datasets/long", "datasets", suffix="")
