@@ -3,8 +3,8 @@
 # ----------------------------------------
 
 [anomaly_detection]
-scale_score_lambda = 0.05 # 评分函数中尺度域分数权重
-anomaly_ratio = 5.0       # 异常率 x %
+scale_score_lambda = 0.2 # 评分函数中尺度域分数权重
+anomaly_ratio = 3.0      # 异常率 x %
 
 
 # ----------------------------------------  
@@ -26,7 +26,7 @@ patch_stride = 8 # 滑窗内 patch 步长
 [model.FM]
 affine = false        # RevIN affine参数
 subtract_last = false # RevIN 减去最后值
-level = 3             # 小波分解层数
+level = 4             # 小波分解层数
 wavelet = "db4"       # 小波类型
 mode = "symmetric"    # 小波分解模式
 
@@ -36,7 +36,7 @@ mode = "symmetric"    # 小波分解模式
 # ----------------------------------------
 
 [model.CFM]
-num_layers = 3 # Transformer 编码器层数
+num_layers = 4 # Transformer 编码器层数
 d_cf = 64      # 内部特征维度(cf: channel-frequency), Transformer 编码器处理特征的维度(嵌入维度?)
 d_model = 64   # 输出维度
 num_heads = 2  # 多头注意力头数
@@ -73,5 +73,5 @@ es_delta = 0.001      # 最小变化量
 ccd_align_temperature = 0.1
 ccd_regular_lambda = 0.1
 ccd_align_lambda = 1.0
-scale_loss_lambda = 0.5     # 尺度域辅助损失权重
-ccd_loss_lambda = 0.5       # 通道相关性发掘损失权重
+scale_loss_lambda = 1.0     # 尺度域辅助损失权重
+ccd_loss_lambda = 1.0       # 通道相关性发掘损失权重
