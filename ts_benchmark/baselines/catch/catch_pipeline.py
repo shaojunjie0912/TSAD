@@ -205,7 +205,7 @@ class CATCHPipeline(nn.Module):
             data=data,
             batch_size=self.batch_size,
             window_size=self.seq_len,
-            step_size=self.seq_len,
+            step_size=1,
             shuffle=False,
             transform=None,
             target_transform=None,
@@ -213,26 +213,38 @@ class CATCHPipeline(nn.Module):
         self.model.to(self.device)
         self.model.eval()
 
-        batch_anomaly_scores = []
+        anomaly_scores_sum = np.zeros(len(data))
+        counts = np.zeros(len(data))
+
         with torch.no_grad():
-            for i, (x, _, padding_mask) in enumerate(self.predict_dataloader):
+            for i, (x, _, padding_mask, start_indices) in enumerate(self.predict_dataloader):
                 x = x.float().to(self.device)
                 padding_mask = padding_mask.float().to(self.device)
                 x_orig, x_hat, s_orig, s_hat, _ = self.model(x)
 
                 # -> (B, T)
                 # 特征维度上取均值 NOTE: 统一时刻所有变量都被判为异常
-                # 时间域分数
-                time_score = torch.mean(self.time_anomaly_criterion(x_hat, x_orig), dim=-1)
-                # 尺度域分数
-                scale_score = torch.mean(self.scale_anomaly_criterion(s_hat, s_orig), dim=-1)
+                time_score = torch.mean(self.time_anomaly_criterion(x_hat, x_orig), dim=-1)  # 时间域
+                scale_score = torch.mean(self.scale_anomaly_criterion(s_hat, s_orig), dim=-1)  # 尺度域
 
-                score = (time_score + self.scale_score_lambda * scale_score) * padding_mask
+                score = time_score + self.scale_score_lambda * scale_score
+                score_np = score.cpu().numpy()
+                padding_mask_np = padding_mask.cpu().numpy()
 
-                batch_anomaly_scores.append(score.cpu().numpy())
+                for j in range(len(start_indices)):
+                    start = start_indices[j]
+                    end = start + self.seq_len
+                    window_score = score_np[j]
+                    window_mask = padding_mask_np[j]
 
-        anomaly_scores = np.concatenate(batch_anomaly_scores, axis=0).reshape(-1)
-        return anomaly_scores[: len(data)]
+                    actual_end = min(end, len(data))
+                    anomaly_scores_sum[start:actual_end] += window_score[: actual_end - start]
+                    counts[start:actual_end] += window_mask[: actual_end - start]
+
+        counts[counts == 0] = 1
+        final_scores = anomaly_scores_sum / counts
+
+        return final_scores
 
     def find_anomalies(self, data: np.ndarray):
         if not self.fitted:

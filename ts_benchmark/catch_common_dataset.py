@@ -7,19 +7,9 @@ import numpy as np
 import pandas as pd
 import torch
 from baselines.catch.catch_pipeline import catch_find_anomalies, catch_score_anomalies
+from baselines.catch.utils.training import set_seed
 from evaluation.metrics.classification_metrics_score import auc_roc
 from tools.plot import plot_anomaly_labels, plot_anomaly_scores
-
-
-def set_seed(seed: int = 1037):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-        # 确保 cudnn 的确定性，但这可能会牺牲一些性能
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
 
 
 def load_config(path: str) -> Dict[str, Any]:

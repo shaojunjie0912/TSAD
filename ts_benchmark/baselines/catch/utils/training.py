@@ -4,6 +4,7 @@ import copy
 import json
 import logging
 import os
+import random
 from typing import Any, Literal, Optional, Union
 
 import numpy as np
@@ -22,6 +23,17 @@ from torch.utils.data import DataLoader, Dataset
 
 # 对于原始数据集, 总长度不固定, 因此只能手动做 padding 确保覆盖所有数据
 # 对于一个自定义大小的 window 窗口再 patching 时, 此时已经知道了 N, 那么可以人为设置好 W 和 S, 以确保覆盖所有数据
+
+
+def set_seed(seed: int = 1037):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+        # 确保 cudnn 的确定性，但这可能会牺牲一些性能
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
 
 def get_dataloader(
@@ -76,11 +88,11 @@ class SlidingWindowDatasetWithPadding(Dataset):
         self.padding_value = padding_value
         self.transform = transform
         self.target_transform = target_transform
-        self.windows, self.masks = self.create_windows()
+        self.windows, self.masks, self.starts = self.create_windows()
 
     def create_windows(self):
         num_samples, num_features = self.data.shape
-        windows, padding_masks = [], []
+        windows, padding_masks, starts = [], [], []
 
         for start in range(0, num_samples, self.step_size):
             end = start + self.window_size
@@ -97,11 +109,12 @@ class SlidingWindowDatasetWithPadding(Dataset):
 
             windows.append(window)
             padding_masks.append(padding_mask)
+            starts.append(start)
 
             if end >= num_samples:
                 break
 
-        return np.stack(windows), np.stack(padding_masks)
+        return np.stack(windows), np.stack(padding_masks), np.array(starts)
 
     def __len__(self):
         return len(self.windows)
@@ -110,6 +123,7 @@ class SlidingWindowDatasetWithPadding(Dataset):
         x = self.windows[idx]
         y = x.copy()
         padding_mask = self.masks[idx]
+        start_idx = self.starts[idx]
 
         if self.transform:
             x = self.transform(x)
@@ -119,7 +133,8 @@ class SlidingWindowDatasetWithPadding(Dataset):
         # X: (batch_size, window_size, num_features)
         # Y: (batch_size, window_size, num_features)
         # mask: (batch_size, window_size) 对应 window_size 中每个时间步是否被填充
-        return torch.from_numpy(x), torch.from_numpy(y), torch.from_numpy(padding_mask)
+        # start_idx: (batch_size) 对应每个窗口的起始索引
+        return torch.from_numpy(x), torch.from_numpy(y), torch.from_numpy(padding_mask), start_idx
 
 
 # NoPadding Dataset: 用于训练、验证、测试
