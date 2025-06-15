@@ -201,7 +201,7 @@ class CATCHPipeline(nn.Module):
             raise ValueError("Please fit the model first!")
 
         self.predict_dataloader = get_dataloader(
-            stage="predict",  # NOTE: 窗口不重叠
+            stage="predict",
             data=data,
             batch_size=self.batch_size,
             window_size=self.seq_len,
