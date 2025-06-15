@@ -147,7 +147,8 @@ class ChannelMaskedAttention(nn.Module):
 
         if channel_mask is not None:  # channel_mask 是 GATChannelMasker 输出的软掩码 (b, n, n)
             # 1. 使用软掩码调整CFM的注意力
-            masked_sims = (sims / scale) * channel_mask.unsqueeze(1)
+            # NOTE: 加法, 软掩码对数
+            masked_sims = (sims / scale) + torch.log(channel_mask.unsqueeze(1) + 1e-9)
             # 2. 计算CCD损失
             ccd_loss = self.ccd_loss_fn(sims, channel_mask)
         else:

@@ -145,6 +145,15 @@ class CATCHPipeline(nn.Module):
                 loss = (
                     time_rec_loss + self.scale_loss_lambda * scale_rec_loss + self.ccd_loss_lambda * ccd_loss
                 )
+
+                # ---- 添加这行用于诊断 ----
+                if i % 100 == 0:  # 每100个batch打印一次
+                    print(
+                        f"batch {i}: time_loss={time_rec_loss.item():.4f}, "
+                        f"scale_loss={scale_rec_loss.item():.4f}, "
+                        f"ccd_loss={ccd_loss.item():.4f}"
+                    )
+
                 train_loss.append(loss.item())
 
                 # --- 反向传播与更新 ---
@@ -163,6 +172,8 @@ class CATCHPipeline(nn.Module):
                 f"LR: {self.optimizer.param_groups[0]['lr']:.6f}"
             )
 
+            self.early_stopping(float(valid_loss), self.model)
+
             if self.early_stopping.should_stop:
                 print("Early stopping triggered. Loading best model weights.")
                 # 在中断循环前，自动加载性能最佳的模型权重
@@ -177,9 +188,11 @@ class CATCHPipeline(nn.Module):
         with torch.no_grad():
             for x, _ in val_dataloader:
                 x = x.float().to(self.device)
-                x_orig, x_hat, _, _, _ = self.model(x)
-                loss = loss_fn(x_hat, x_orig).item()  # TODO: 验证时只看时域重构损失?
-                total_loss.append(loss)
+                x_orig, x_hat, s_orig, s_hat, _ = self.model(x)
+                time_rec_loss = loss_fn(x_hat, x_orig)
+                scale_rec_loss = loss_fn(s_hat, s_orig)
+                loss = time_rec_loss + self.scale_loss_lambda * scale_rec_loss
+                total_loss.append(loss.item())
         self.model.train()  # NOTE: 重设回训练模式
         return np.mean(total_loss)
 

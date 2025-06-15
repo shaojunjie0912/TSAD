@@ -73,5 +73,5 @@ es_delta = 0.001      # 最小变化量
 ccd_align_temperature = 0.1
 ccd_regular_lambda = 0.1
 ccd_align_lambda = 1.0
-scale_loss_lambda = 1.0     # 尺度域辅助损失权重
-ccd_loss_lambda = 1.0       # 通道相关性发掘损失权重
+scale_loss_lambda = 0.5     # 尺度域辅助损失权重
+ccd_loss_lambda = 0.01      # 通道相关性发掘损失权重
