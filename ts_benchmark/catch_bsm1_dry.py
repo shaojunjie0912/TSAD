@@ -4,7 +4,8 @@ from typing import Any, Dict
 
 import pandas as pd
 from catch.catch_pipeline import catch_find_anomalies, catch_score_anomalies
-from tools.plot import plot_anomaly_labels, plot_anomaly_scores
+
+from ts_benchmark.tools.tools import plot_anomaly_labels, plot_anomaly_scores
 
 
 def load_config(path: str) -> Dict[str, Any]:

@@ -146,13 +146,13 @@ class CATCHPipeline(nn.Module):
                     time_rec_loss + self.scale_loss_lambda * scale_rec_loss + self.ccd_loss_lambda * ccd_loss
                 )
 
-                # ---- 添加这行用于诊断 ----
-                if i % 100 == 0:  # 每100个batch打印一次
-                    print(
-                        f"batch {i}: time_loss={time_rec_loss.item():.4f}, "
-                        f"scale_loss={scale_rec_loss.item():.4f}, "
-                        f"ccd_loss={ccd_loss.item():.4f}"
-                    )
+                # # ---- 添加这行用于诊断 ----
+                # if i % 100 == 0:  # 每100个batch打印一次
+                #     print(
+                #         f"batch {i}: time_loss={time_rec_loss.item():.4f}, "
+                #         f"scale_loss={scale_rec_loss.item():.4f}, "
+                #         f"ccd_loss={ccd_loss.item():.4f}"
+                #     )
 
                 train_loss.append(loss.item())
 

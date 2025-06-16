@@ -1,15 +1,23 @@
 import os
+import random
 from typing import Dict
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import torch
 
-#  我已经支持结果路径+数据集名称+算法名称, 不同模型参数咋办?
 
-# 如何保存不同模型参数和对应的结果图?
-# 1. 是否需要增加一个形参表示模型参数如果修改了参数是否应该保存到不同的目录?
-#
+def set_seed(seed: int = 1037):
+    random.seed(seed)  # python 内置
+    np.random.seed(seed)  # numpy
+    torch.manual_seed(seed)  # pytorch-cpu
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)  # pytorch-gpu
+        torch.cuda.manual_seed_all(seed)  # pytorch-all-gpu
+        # 确保 cudnn 的确定性，但这可能会牺牲一些性能
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
 
 def plot_anomaly_scores(

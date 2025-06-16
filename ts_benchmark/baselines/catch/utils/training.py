@@ -1,39 +1,18 @@
-"""数据集处理模块"""
+"""工具模块
+
+- 数据加载器
+- 早停策略
+"""
 
 import copy
 import json
 import logging
 import os
-import random
 from typing import Any, Literal, Optional, Union
 
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
-
-# TODO: 学习一下数据集 getitem 的实现, 人家这都是返回 tensor 类型
-
-# NOTE: 滑窗拾遗
-# 假设总数据长度为 N, 窗口大小为 W, 步长为 S
-# 则窗口的数量为 (N - W) // S + 1
-# 如果要覆盖所有数据
-# - N, W, S 满足: (N - W) % S == 0
-# 或者
-# - padding
-
-# 对于原始数据集, 总长度不固定, 因此只能手动做 padding 确保覆盖所有数据
-# 对于一个自定义大小的 window 窗口再 patching 时, 此时已经知道了 N, 那么可以人为设置好 W 和 S, 以确保覆盖所有数据
-
-
-def set_seed(seed: int = 1037):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-        # 确保 cudnn 的确定性，但这可能会牺牲一些性能
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
 
 
 def get_dataloader(
@@ -339,23 +318,3 @@ class EarlyStopping:
             model.load_state_dict(self._best_state_dict)
         else:
             raise RuntimeError("No checkpoint available to load.")
-
-
-if __name__ == "__main__":
-    # 测试 SlidingWindowDatasetWithPadding
-    data = np.random.rand(10, 2).astype(np.float32)
-    predict_dataloader = get_dataloader(
-        stage="predict",
-        data=data,
-        batch_size=2,
-        window_size=4,
-        step_size=4,
-        shuffle=False,
-        padding_value=0.0,
-    )
-    for x, y, mask in predict_dataloader:
-        print(f"x: {x.shape}, y: {y.shape}, mask: {mask.shape}")
-        print(f"x: {x}")
-        # print(f"y: {y}")
-        print(f"mask: {mask}")
-        break
