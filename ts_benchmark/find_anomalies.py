@@ -7,7 +7,7 @@ import pandas as pd
 from baselines.catch.catch_pipeline import catch_find_anomalies, catch_score_anomalies
 from tools.tools import set_seed
 
-from ts_benchmark.evaluation.metrics.anomaly_score import auc_roc
+from ts_benchmark.evaluation.metrics.anomaly_score_metrics import auc_roc
 
 
 def parse_args():
