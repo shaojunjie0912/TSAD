@@ -3,7 +3,7 @@ import tomllib
 from typing import Any, Dict
 
 import pandas as pd
-from baselines.catch.catch_pipeline import catch_score_anomalies
+from baselines.swift.swift_pipeline import swift_score_anomalies
 from evaluation.metrics.anomaly_detection_metrics_score import auc_roc
 from tools.tools import set_seed
 
@@ -30,16 +30,16 @@ if __name__ == "__main__":
     set_seed(1037)
 
     # 加载配置文件
-    catch_config: Dict[Any, Any]
+    swift_config: Dict[Any, Any]
     with open(args.config, "rb") as f:
-        catch_config = tomllib.load(f)
+        swift_config = tomllib.load(f)
 
     df = pd.read_csv(args.dataset)
 
     data = df.iloc[:, :-1]
     labels = df.iloc[:, -1].to_numpy()
 
-    scores = catch_score_anomalies(data=data.values, config=catch_config)
+    scores = swift_score_anomalies(data=data.values, config=swift_config)
     # np.savetxt("scores.csv", scores, delimiter=",", fmt="%.6f")
     print(auc_roc(labels, scores))
     # plot_anomaly_scores(
@@ -47,10 +47,10 @@ if __name__ == "__main__":
     #     scores=scores,
     #     results_dir="results",
     #     dataset_name="common_dataset",
-    #     algorithm_name="CATCH",
+    #     algorithm_name="SWIFT",
     # )
 
-    # predictions = catch_find_anomalies(data=data.values, config=catch_config)
+    # predictions = swift_find_anomalies(data=data.values, config=swift_config)
     # np.savetxt("predictions.csv", predictions, delimiter=",", fmt="%d")
 
     print("----------------- ✅ -----------------")

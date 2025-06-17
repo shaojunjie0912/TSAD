@@ -4,7 +4,7 @@ from typing import Any, Dict
 
 import numpy as np
 import pandas as pd
-from baselines.catch.catch_pipeline import catch_find_anomalies
+from baselines.swift.swift_pipeline import swift_find_anomalies
 from evaluation.metrics.anomaly_detection_metrics_label import affiliation_f
 from tools.tools import set_seed
 
@@ -31,16 +31,16 @@ if __name__ == "__main__":
     set_seed(1037)
 
     # 加载配置文件
-    catch_config: Dict[Any, Any]
+    swift_config: Dict[Any, Any]
     with open(args.config, "rb") as f:
-        catch_config = tomllib.load(f)
+        swift_config = tomllib.load(f)
 
     df = pd.read_csv(args.dataset)
 
     data = df.iloc[:, :-1]
     labels = df.iloc[:, -1].to_numpy()
 
-    predictions = catch_find_anomalies(data=data.values, config=catch_config)
+    predictions = swift_find_anomalies(data=data.values, config=swift_config)
     print(affiliation_f(labels, predictions))
     # np.savetxt("predictions.csv", predictions, delimiter=",", fmt="%d")
 
@@ -49,7 +49,7 @@ if __name__ == "__main__":
     #     predictions=predictions,
     #     results_dir="results",
     #     dataset_name="common_dataset",
-    #     algorithm_name="CATCH",
+    #     algorithm_name="SWIFT",
     # )
 
     print("----------------- 🆗 -----------------")

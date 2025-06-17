@@ -5,11 +5,11 @@ import torch
 import torch.nn as nn
 from torch.optim import lr_scheduler
 
-from .model.catch import CATCH
+from .model.swift import SWIFT
 from .utils.training import EarlyStopping, get_dataloader
 
 
-class CATCHPipeline(nn.Module):
+class SWIFTPipeline(nn.Module):
     def __init__(self, config: Dict[str, Any]):
         super().__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -80,7 +80,7 @@ class CATCHPipeline(nn.Module):
         cfm_config = self.model_config["CFM"]
         tsrm_config = self.model_config["TSRM"]
 
-        self.model = CATCH(
+        self.model = SWIFT(
             # data config
             num_features=data.shape[1],
             seq_len=self.data_config["seq_len"],
@@ -334,22 +334,22 @@ class CATCHPipeline(nn.Module):
         return predictions, test_scores
 
 
-def catch_score_anomalies(data: np.ndarray, config: Dict[str, Any]) -> np.ndarray:
+def swift_score_anomalies(data: np.ndarray, config: Dict[str, Any]) -> np.ndarray:
     """
     计算异常分数
     """
-    pipeline = CATCHPipeline(config)
+    pipeline = SWIFTPipeline(config)
     pipeline.fit(data)
     scores = pipeline.score_anomalies(data)
 
     return scores
 
 
-def catch_find_anomalies(data: np.ndarray, config: Dict[str, Any]) -> np.ndarray:
+def swift_find_anomalies(data: np.ndarray, config: Dict[str, Any]) -> np.ndarray:
     """
     找到异常点
     """
-    pipeline = CATCHPipeline(config)
+    pipeline = SWIFTPipeline(config)
     pipeline.fit(data)
     predictions, scores = pipeline.find_anomalies(data)
 

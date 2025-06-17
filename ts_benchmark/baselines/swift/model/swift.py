@@ -1,3 +1,8 @@
+"""
+SWIFT-AD (Stationary Wavelet-patched Inter-channel Fusion Transformer for Anomaly Detection)
+Multiresolution Wavelet Patching and Graph-Guided Channel Fusion for Robust Multivariate Time-Series Anomaly Detection
+"""
+
 from typing import Literal, Optional, Tuple
 
 import torch
@@ -204,7 +209,7 @@ class RevIN(nn.Module):
 
 
 # NOTE: 原来的 configs 是一个类, 所有参数都是类属性(从字典中读取并通过 setaddr 设置)
-class CATCH(nn.Module):
+class SWIFT(nn.Module):
     def __init__(
         self,
         num_features: int,

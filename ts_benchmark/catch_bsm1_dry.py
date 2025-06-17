@@ -3,7 +3,7 @@ import tomllib
 from typing import Any, Dict
 
 import pandas as pd
-from catch.catch_pipeline import catch_find_anomalies, catch_score_anomalies
+from swift.swift_pipeline import swift_find_anomalies, swift_score_anomalies
 
 from ts_benchmark.tools.tools import plot_anomaly_labels, plot_anomaly_scores
 
@@ -23,7 +23,7 @@ def load_config(path: str) -> Dict[str, Any]:
 
 if __name__ == "__main__":
     # 加载配置文件
-    catch_config = load_config("configs/bsm1_dry/CATCH/catch.toml")
+    swift_config = load_config("configs/bsm1_dry/SWIFT/swift.toml")
     # 加载数据
     df = pd.read_csv("datasets/bsm1_dry/inputs.csv", index_col=0, parse_dates=[0])
 
@@ -33,23 +33,23 @@ if __name__ == "__main__":
         ["Ss", "Xi", "Xs"],
     ]
 
-    scores = catch_score_anomalies(data=data.values, config=catch_config)
+    scores = swift_score_anomalies(data=data.values, config=swift_config)
     plot_anomaly_scores(
         data=data,
         scores=scores,
         results_dir="results",
         dataset_name="bsm1_dry",
-        algorithm_name="CATCH",
+        algorithm_name="SWIFT",
     )
 
-    predictions = catch_find_anomalies(data=data.values, config=catch_config)
+    predictions = swift_find_anomalies(data=data.values, config=swift_config)
 
     plot_anomaly_labels(
         data=data,
         predictions=predictions,
         results_dir="results",
         dataset_name="bsm1_dry",
-        algorithm_name="CATCH",
+        algorithm_name="SWIFT",
     )
 
     print("----------------- 🆗 -----------------")
