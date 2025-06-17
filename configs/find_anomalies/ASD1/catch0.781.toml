@@ -3,7 +3,7 @@
 # ----------------------------------------
 
 [anomaly_detection]
-scale_score_lambda = 0.5 # 评分函数中尺度域分数权重
+scale_score_lambda = 0.2 # 评分函数中尺度域分数权重
 anomaly_ratio = 3.0      # 异常率 x %
 
 
@@ -36,13 +36,13 @@ mode = "symmetric"    # 小波分解模式
 # ----------------------------------------
 
 [model.CFM]
-num_layers = 1 # Transformer 编码器层数
-d_cf = 32      # 内部特征维度(cf: channel-frequency), Transformer 编码器处理特征的维度(嵌入维度?)
-d_model = 32   # 输出维度
-num_heads = 4  # 多头注意力头数
-d_head = 8     # 注意力头维度
-d_ff = 64      # 前馈网络的隐藏层维度
-dropout = 0.3  # Transformer dropout 率
+num_layers = 4 # Transformer 编码器层数
+d_cf = 64      # 内部特征维度(cf: channel-frequency), Transformer 编码器处理特征的维度(嵌入维度?)
+d_model = 64   # 输出维度
+num_heads = 2  # 多头注意力头数
+d_head = 64    # 注意力头维度
+d_ff = 128     # 前馈网络的隐藏层维度
+dropout = 0.2  # Transformer dropout 率
 
 # ----------------------------------------
 # --------- 模型 (时尺重构模块) ----------

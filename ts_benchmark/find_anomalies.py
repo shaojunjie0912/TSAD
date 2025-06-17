@@ -4,10 +4,9 @@ from typing import Any, Dict
 
 import numpy as np
 import pandas as pd
-from baselines.catch.catch_pipeline import catch_find_anomalies, catch_score_anomalies
+from baselines.catch.catch_pipeline import catch_find_anomalies
+from evaluation.metrics.anomaly_detection_metrics_label import affiliation_f
 from tools.tools import set_seed
-
-from ts_benchmark.evaluation.metrics.anomaly_score_metrics import auc_roc
 
 
 def parse_args():
@@ -41,18 +40,8 @@ if __name__ == "__main__":
     data = df.iloc[:, :-1]
     labels = df.iloc[:, -1].to_numpy()
 
-    scores = catch_score_anomalies(data=data.values, config=catch_config)
-    # np.savetxt("scores.csv", scores, delimiter=",", fmt="%.6f")
-    print(auc_roc(labels, scores))
-    # plot_anomaly_scores(
-    #     data=data,
-    #     scores=scores,
-    #     results_dir="results",
-    #     dataset_name="common_dataset",
-    #     algorithm_name="CATCH",
-    # )
-
-    # predictions = catch_find_anomalies(data=data.values, config=catch_config)
+    predictions = catch_find_anomalies(data=data.values, config=catch_config)
+    print(affiliation_f(labels, predictions))
     # np.savetxt("predictions.csv", predictions, delimiter=",", fmt="%d")
 
     # plot_anomaly_labels(

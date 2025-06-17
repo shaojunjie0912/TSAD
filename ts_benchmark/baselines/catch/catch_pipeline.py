@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any, Dict, Literal, Optional
 
 import numpy as np
 import torch
@@ -38,6 +38,10 @@ class CATCHPipeline(nn.Module):
         self.scale_anomaly_criterion = nn.MSELoss(reduction="none")
 
         self.fitted: bool = False
+
+        # 验证集分数缓存
+        self.validation_scores: Optional[np.ndarray] = None
+        self.val_data: Optional[np.ndarray] = None
 
     # train + val
     def fit(self, data: np.ndarray):
@@ -181,9 +185,16 @@ class CATCHPipeline(nn.Module):
                 break
 
         self.fitted = True
+        # 在训练结束后, 计算并缓存验证集分数
+        print("\nCalculating and caching validation scores for future use...")
+        self.model.eval()
+        if self.val_data is not None:
+            self.validation_scores = self.score_anomalies(self.val_data)
+        self.model.train()
+        print("Fitting process complete. Validation scores are now cached.")
 
     def validate(self, val_dataloader, loss_fn):
-        self.model.eval()  # NOTE: 将模型设置为评估模式
+        self.model.eval()  # -> eval
         total_loss = []
         with torch.no_grad():
             for x, _ in val_dataloader:
@@ -193,7 +204,7 @@ class CATCHPipeline(nn.Module):
                 scale_rec_loss = loss_fn(s_hat, s_orig)
                 loss = time_rec_loss + self.scale_loss_lambda * scale_rec_loss
                 total_loss.append(loss.item())
-        self.model.train()  # NOTE: 重设回训练模式
+        self.model.train()  # -> train
         return np.mean(total_loss)
 
     def score_anomalies(self, data: np.ndarray) -> np.ndarray:
@@ -243,30 +254,83 @@ class CATCHPipeline(nn.Module):
 
         counts[counts == 0] = 1
         final_scores = anomaly_scores_sum / counts
-
         return final_scores
 
-    def find_anomalies(self, data: np.ndarray):
+    def _calculate_threshold(
+        self,
+        val_scores: np.ndarray,
+        strategy: Literal["percentile", "robust_percentile", "std"] = "robust_percentile",
+        **kwargs,
+    ) -> float:
+        """根据不同策略计算异常阈值"""
+        print(f"Calculating threshold using '{strategy}' strategy...")
+
+        if strategy == "percentile":
+            # 百分位数
+            threshold = np.percentile(val_scores, 100 - self.anomaly_ratio)
+
+        elif strategy == "robust_percentile":
+            # 鲁棒百分位数
+            # q_robust: 用于识别“尾部”数据的分位数，例如 99.0 表示我们关注分数最高的1%数据。
+            q_robust = kwargs.get("q_robust", 99.0)
+            # p_robust: 在上面识别出的“尾部”数据中，再取一个百分位作为最终阈值。
+            # 例如 90.0 表示我们将尾部数据中较低的90%部分作为正常值的极限，切掉了尾部最顶端的10%。
+            p_robust = kwargs.get("p_robust", 90.0)
+
+            # 1. 找到初始的高分位数 q，确定“尾部”的起点
+            tail_threshold = np.percentile(val_scores, q_robust)
+
+            # 2. 筛选出所有高于这个起点的分数，得到“尾部”数据分布
+            tail_scores = val_scores[val_scores > tail_threshold]
+
+            if len(tail_scores) == 0:
+                # 如果尾部没有数据（可能验证集非常“干净”且分布集中），则退回到使用初始的尾部阈值
+                print(
+                    f"  (Warning: No scores found above the {q_robust}th percentile. Using tail_threshold as fallback.)"
+                )
+                return float(tail_threshold)
+
+            # 3. 在“尾部”数据中，使用 p_robust 计算最终阈值
+            final_threshold = np.percentile(tail_scores, p_robust)
+
+            print(
+                f"  (Robust params: tail defined by q={q_robust}th percentile, final threshold at p={p_robust}th percentile of the tail)"
+            )
+            threshold = final_threshold
+
+        elif strategy == "std":
+            # 标准差策略
+            n_std = kwargs.get("n_std", 3.0)
+            mean = np.mean(val_scores)
+            std = np.std(val_scores)
+            threshold = mean + n_std * std
+            print(f"  (STD params: mean={mean:.4f}, std={std:.4f}, n_std={n_std})")
+
+        else:
+            raise ValueError(f"Unknown threshold strategy: {strategy}")
+
+        return float(threshold)
+
+    def find_anomalies(
+        self,
+        data: np.ndarray,
+        threshold_strategy: Literal["percentile", "robust_percentile", "std"] = "robust_percentile",
+        **kwargs,
+    ) -> tuple[np.ndarray, np.ndarray]:
         if not self.fitted:
             raise ValueError("Please fit the model first!")
 
-        # 1. 获取测试数据的异常分数
         print("Scoring anomalies on the test data...")
         test_scores = self.score_anomalies(data)
 
-        # 2. 高效地计算阈值
-        # 不再遍历整个训练集，而是使用验证集的分数来估计正常分数的分布。
-        # 验证集未经训练，可以较好地代表正常数据的分布。
-        print("Calculating threshold on the validation data...")
-        val_scores = self.score_anomalies(self.val_data)
+        if self.validation_scores is None:
+            raise RuntimeError("Validation scores were not cached. Please check the fit() method.")
 
-        # 3. 确定阈值并进行预测
-        threshold = np.percentile(val_scores, 100 - self.anomaly_ratio)
+        threshold = self._calculate_threshold(self.validation_scores, strategy=threshold_strategy, **kwargs)
         print(f"Anomaly threshold determined: {threshold:.6f}")
 
         predictions = (test_scores > threshold).astype(int)
 
-        # 同时返回预测的0/1标签和每个点的具体分数，方便后续评估（如计算AUC）
         return predictions, test_scores
 
 

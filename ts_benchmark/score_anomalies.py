@@ -4,9 +4,8 @@ from typing import Any, Dict
 
 import pandas as pd
 from baselines.catch.catch_pipeline import catch_score_anomalies
+from evaluation.metrics.anomaly_detection_metrics_score import auc_roc
 from tools.tools import set_seed
-
-from ts_benchmark.evaluation.metrics.anomaly_score_metrics import auc_roc
 
 
 def parse_args():
