@@ -207,7 +207,100 @@ class SWIFTPipeline(nn.Module):
         self.model.train()  # -> train
         return np.mean(total_loss)
 
-    def score_anomalies(self, data: np.ndarray) -> np.ndarray:
+    def _calculate_threshold(
+        self,
+        val_scores: np.ndarray,
+        strategy: Literal["percentile", "robust_percentile", "std", "adaptive"] = "adaptive",
+        anomaly_ratio: Optional[float] = None,
+        **kwargs,
+    ) -> float:
+        """根据不同策略计算异常阈值
+
+        Args:
+            val_scores: 验证集异常分数
+            strategy: 阈值计算策略
+            anomaly_ratio: 异常比例，如果提供则覆盖默认配置
+            **kwargs: 其他参数
+        """
+        if anomaly_ratio is None:
+            anomaly_ratio = self.anomaly_ratio
+
+        print(f"Calculating threshold using '{strategy}' strategy with anomaly_ratio={anomaly_ratio:.3f}...")
+
+        if strategy == "percentile":
+            # 百分位数策略
+            threshold = np.percentile(val_scores, 100 - anomaly_ratio)
+
+        elif strategy == "robust_percentile":
+            # 改进的鲁棒百分位数策略
+            q_robust = kwargs.get("q_robust", 95.0)  # 降低从99.0到95.0，更保守
+            p_robust = kwargs.get("p_robust", 80.0)  # 降低从90.0到80.0，更保守
+
+            tail_threshold = np.percentile(val_scores, q_robust)
+            tail_scores = val_scores[val_scores > tail_threshold]
+
+            if len(tail_scores) == 0:
+                print(f"  Warning: No scores above {q_robust}th percentile. Using percentile fallback.")
+                return float(np.percentile(val_scores, 100 - anomaly_ratio))
+
+            final_threshold = np.percentile(tail_scores, p_robust)
+            print(f"  Robust params: q={q_robust}, p={p_robust}")
+            threshold = final_threshold
+
+        elif strategy == "std":
+            # 标准差策略
+            n_std = kwargs.get("n_std", 2.5)  # 降低从3.0到2.5，更敏感
+            mean = np.mean(val_scores)
+            std = np.std(val_scores)
+            threshold = mean + n_std * std
+            print(f"  STD params: mean={mean:.4f}, std={std:.4f}, n_std={n_std}")
+
+        elif strategy == "adaptive":
+            # 新增：自适应阈值策略
+            # 结合多种方法，根据数据分布特征选择最优策略
+
+            # 计算分数的统计特征
+            mean_score = np.mean(val_scores)
+            std_score = np.std(val_scores)
+            skewness = self._calculate_skewness(val_scores)
+
+            # 根据偏度选择策略
+            if abs(skewness) > 1.5:  # 高偏度，使用鲁棒方法
+                print(f"  High skewness detected ({skewness:.3f}), using robust method...")
+                q_robust = 92.0 + min(3.0, float(abs(skewness)))  # 动态调整
+                tail_threshold = np.percentile(val_scores, q_robust)
+                tail_scores = val_scores[val_scores > tail_threshold]
+
+                if len(tail_scores) > 0:
+                    threshold = np.percentile(tail_scores, 75.0)
+                else:
+                    threshold = np.percentile(val_scores, 100 - anomaly_ratio)
+            else:  # 低偏度，使用改进的百分位数方法
+                print(f"  Normal distribution detected (skewness={skewness:.3f}), using percentile method...")
+                # 使用更保守的百分位数
+                base_percentile = 100 - anomaly_ratio
+                # 根据标准差调整
+                cv = std_score / (mean_score + 1e-8)  # 变异系数
+                adjusted_percentile = base_percentile - min(2.0, float(cv * 10))  # 动态调整
+                threshold = np.percentile(val_scores, max(90.0, adjusted_percentile))
+
+            print(f"  Adaptive params: skewness={skewness:.3f}, final_threshold={threshold:.6f}")
+
+        else:
+            raise ValueError(f"Unknown threshold strategy: {strategy}")
+
+        return float(threshold)
+
+    def _calculate_skewness(self, data: np.ndarray) -> float:
+        """计算数据的偏度"""
+        mean = np.mean(data)
+        std = np.std(data)
+        if std == 0:
+            return 0.0
+        return float(np.mean(((data - mean) / std) ** 3))
+
+    def score_anomalies(self, data: np.ndarray, aggregation_method: str = "weighted_max") -> np.ndarray:
+        """改进的异常分数计算，支持多种聚合方法"""
         if not self.fitted:
             raise ValueError("Please fit the model first!")
 
@@ -225,6 +318,7 @@ class SWIFTPipeline(nn.Module):
         self.model.eval()
 
         anomaly_scores_sum = np.zeros(len(data))
+        anomaly_scores_max = np.zeros(len(data))  # 新增：最大值聚合
         counts = np.zeros(len(data))
 
         with torch.no_grad():
@@ -233,10 +327,9 @@ class SWIFTPipeline(nn.Module):
                 padding_mask = padding_mask.float().to(self.device)
                 x_orig, x_hat, s_orig, s_hat, _ = self.model(x)
 
-                # -> (B, T)
-                # 特征维度上取均值 NOTE: 统一时刻所有变量都被判为异常
-                time_score = torch.mean(self.time_anomaly_criterion(x_hat, x_orig), dim=-1)  # 时间域
-                scale_score = torch.mean(self.scale_anomaly_criterion(s_hat, s_orig), dim=-1)  # 尺度域
+                # 计算时间域和尺度域分数
+                time_score = torch.mean(self.time_anomaly_criterion(x_hat, x_orig), dim=-1)
+                scale_score = torch.mean(self.scale_anomaly_criterion(s_hat, s_orig), dim=-1)
 
                 score = time_score + self.scale_score_lambda * scale_score
                 score_np = score.cpu().numpy()
@@ -249,87 +342,76 @@ class SWIFTPipeline(nn.Module):
                     window_mask = padding_mask_np[j]
 
                     actual_end = min(end, len(data))
-                    anomaly_scores_sum[start:actual_end] += window_score[: actual_end - start]
-                    counts[start:actual_end] += window_mask[: actual_end - start]
+                    valid_length = actual_end - start
+
+                    # 原有的求和聚合
+                    anomaly_scores_sum[start:actual_end] += window_score[:valid_length]
+                    # 新增的最大值聚合
+                    anomaly_scores_max[start:actual_end] = np.maximum(
+                        anomaly_scores_max[start:actual_end], window_score[:valid_length]
+                    )
+                    counts[start:actual_end] += window_mask[:valid_length]
 
         counts[counts == 0] = 1
-        final_scores = anomaly_scores_sum / counts
-        return final_scores
 
-    def _calculate_threshold(
-        self,
-        val_scores: np.ndarray,
-        strategy: Literal["percentile", "robust_percentile", "std"] = "robust_percentile",
-        **kwargs,
-    ) -> float:
-        """根据不同策略计算异常阈值"""
-        print(f"Calculating threshold using '{strategy}' strategy...")
-
-        if strategy == "percentile":
-            # 百分位数
-            threshold = np.percentile(val_scores, 100 - self.anomaly_ratio)
-
-        elif strategy == "robust_percentile":
-            # 鲁棒百分位数
-            # q_robust: 用于识别“尾部”数据的分位数，例如 99.0 表示我们关注分数最高的1%数据。
-            q_robust = kwargs.get("q_robust", 99.0)
-            # p_robust: 在上面识别出的“尾部”数据中，再取一个百分位作为最终阈值。
-            # 例如 90.0 表示我们将尾部数据中较低的90%部分作为正常值的极限，切掉了尾部最顶端的10%。
-            p_robust = kwargs.get("p_robust", 90.0)
-
-            # 1. 找到初始的高分位数 q，确定“尾部”的起点
-            tail_threshold = np.percentile(val_scores, q_robust)
-
-            # 2. 筛选出所有高于这个起点的分数，得到“尾部”数据分布
-            tail_scores = val_scores[val_scores > tail_threshold]
-
-            if len(tail_scores) == 0:
-                # 如果尾部没有数据（可能验证集非常“干净”且分布集中），则退回到使用初始的尾部阈值
-                print(
-                    f"  (Warning: No scores found above the {q_robust}th percentile. Using tail_threshold as fallback.)"
-                )
-                return float(tail_threshold)
-
-            # 3. 在“尾部”数据中，使用 p_robust 计算最终阈值
-            final_threshold = np.percentile(tail_scores, p_robust)
-
-            print(
-                f"  (Robust params: tail defined by q={q_robust}th percentile, final threshold at p={p_robust}th percentile of the tail)"
-            )
-            threshold = final_threshold
-
-        elif strategy == "std":
-            # 标准差策略
-            n_std = kwargs.get("n_std", 3.0)
-            mean = np.mean(val_scores)
-            std = np.std(val_scores)
-            threshold = mean + n_std * std
-            print(f"  (STD params: mean={mean:.4f}, std={std:.4f}, n_std={n_std})")
-
+        if aggregation_method == "mean":
+            final_scores = anomaly_scores_sum / counts
+        elif aggregation_method == "max":
+            final_scores = anomaly_scores_max
+        elif aggregation_method == "weighted_max":
+            # 加权最大值：结合平均值和最大值
+            mean_scores = anomaly_scores_sum / counts
+            alpha = 0.3  # 平均值权重
+            beta = 0.7  # 最大值权重
+            final_scores = alpha * mean_scores + beta * anomaly_scores_max
         else:
-            raise ValueError(f"Unknown threshold strategy: {strategy}")
+            raise ValueError(f"Unknown aggregation method: {aggregation_method}")
 
-        return float(threshold)
+        return final_scores
 
     def find_anomalies(
         self,
         data: np.ndarray,
-        threshold_strategy: Literal["percentile", "robust_percentile", "std"] = "robust_percentile",
+        threshold_strategy: Literal["percentile", "robust_percentile", "std", "adaptive"] = "adaptive",
+        use_validation_threshold: bool = True,
+        aggregation_method: str = "weighted_max",
         **kwargs,
     ) -> tuple[np.ndarray, np.ndarray]:
+        """改进的异常检测函数
+
+        Args:
+            data: 测试数据
+            threshold_strategy: 阈值计算策略
+            use_validation_threshold: 是否使用验证集阈值（False时使用测试数据自身计算阈值）
+            aggregation_method: 分数聚合方法
+            **kwargs: 其他参数
+        """
         if not self.fitted:
             raise ValueError("Please fit the model first!")
 
-        print("Scoring anomalies on the test data...")
-        test_scores = self.score_anomalies(data)
+        print(f"Scoring anomalies on test data using '{aggregation_method}' aggregation...")
+        test_scores = self.score_anomalies(data, aggregation_method=aggregation_method)
 
-        if self.validation_scores is None:
-            raise RuntimeError("Validation scores were not cached. Please check the fit() method.")
+        if use_validation_threshold:
+            # 使用验证集计算阈值（传统方法）
+            if self.validation_scores is None:
+                raise RuntimeError("Validation scores were not cached. Please check the fit() method.")
+            threshold_scores = self.validation_scores
+            print("Using validation set for threshold calculation...")
+        else:
+            # 使用测试数据自身计算阈值（更保守的方法）
+            threshold_scores = test_scores
+            print("Using test data itself for threshold calculation (unsupervised mode)...")
 
-        threshold = self._calculate_threshold(self.validation_scores, strategy=threshold_strategy, **kwargs)
+        threshold = self._calculate_threshold(threshold_scores, strategy=threshold_strategy, **kwargs)
         print(f"Anomaly threshold determined: {threshold:.6f}")
 
         predictions = (test_scores > threshold).astype(int)
+
+        # 输出一些统计信息
+        anomaly_count = np.sum(predictions)
+        anomaly_rate = anomaly_count / len(predictions)
+        print(f"Detected {anomaly_count} anomalies out of {len(predictions)} points ({anomaly_rate:.3%})")
 
         return predictions, test_scores
 

@@ -6,25 +6,7 @@ import numpy as np
 import pandas as pd
 from baselines.swift.swift_pipeline import swift_find_anomalies
 from evaluation.metrics.anomaly_detection_metrics_label import affiliation_f
-from tools.tools import set_seed
-
-
-def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "-c",
-        "--config",
-        type=str,
-        help="配置文件路径",
-    )
-    parser.add_argument(
-        "-d",
-        "--dataset",
-        type=str,
-        help="数据集文件路径",
-    )
-    return parser.parse_args()
-
+from tools.tools import parse_args, set_seed
 
 if __name__ == "__main__":
     args = parse_args()

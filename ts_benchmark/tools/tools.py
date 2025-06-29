@@ -1,3 +1,4 @@
+import argparse
 import os
 import random
 from typing import Dict
@@ -6,6 +7,23 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "-c",
+        "--config",
+        type=str,
+        help="配置文件路径",
+    )
+    parser.add_argument(
+        "-d",
+        "--dataset",
+        type=str,
+        help="数据集文件路径",
+    )
+    return parser.parse_args()
 
 
 def set_seed(seed: int = 1037):
