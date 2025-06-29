@@ -19,8 +19,8 @@ class SWIFTPipeline(nn.Module):
         self.training_config = config["training"]
         self.loss_config = config["loss"]
 
-        self.time_loss_fn = nn.HuberLoss(delta=1.0)  # 时域损失函数 TODO: 超参数
-        self.scale_loss_fn = nn.HuberLoss(delta=1.0)  # 尺度域损失函数
+        self.time_loss_fn = nn.HuberLoss(delta=self.loss_config["time_loss_delta"])  # 时域损失函数
+        self.scale_loss_fn = nn.HuberLoss(delta=self.loss_config["scale_loss_delta"])  # 尺度域损失函数
 
         self.ccd_loss_lambda = self.loss_config["ccd_loss_lambda"]
         self.scale_loss_lambda = self.loss_config["scale_loss_lambda"]
@@ -99,6 +99,10 @@ class SWIFTPipeline(nn.Module):
             d_head=cfm_config["d_head"],
             d_ff=cfm_config["d_ff"],
             dropout=cfm_config["dropout"],
+            attention_dropout=cfm_config["attention_dropout"],
+            num_gat_heads=cfm_config["num_gat_heads"],
+            gat_head_dim=cfm_config["gat_head_dim"],
+            gat_dropout_rate=cfm_config["gat_dropout_rate"],
             is_flatten_individual=tsrm_config["is_flatten_individual"],
             rec_head_dropout=tsrm_config["rec_head_dropout"],
             # loss config
@@ -185,13 +189,14 @@ class SWIFTPipeline(nn.Module):
                 break
 
         self.fitted = True
-        # 在训练结束后, 计算并缓存验证集分数
-        print("\nCalculating and caching validation scores for future use...")
+        # 在训练结束后, 计算并缓存验证集分数用于阈值计算
+        # 注意：验证集可能包含少量异常，但这是异常检测的正常情况
+        print("\nCalculating and caching validation scores for threshold calculation...")
         self.model.eval()
         if self.val_data is not None:
             self.validation_scores = self.score_anomalies(self.val_data)
         self.model.train()
-        print("Fitting process complete. Validation scores are now cached.")
+        print("Fitting process complete. Validation scores are cached for threshold calculation.")
 
     def validate(self, val_dataloader, loss_fn):
         self.model.eval()  # -> eval
@@ -216,8 +221,12 @@ class SWIFTPipeline(nn.Module):
     ) -> float:
         """根据不同策略计算异常阈值
 
+        使用验证集的异常分数分布来计算阈值。
+        注意：验证集可能包含少量异常，但异常率较小，
+        模型需要从大部分正常数据中学习并设定合理的阈值。
+
         Args:
-            val_scores: 验证集异常分数
+            val_scores: 验证集异常分数（可能包含少量异常）
             strategy: 阈值计算策略
             anomaly_ratio: 异常比例，如果提供则覆盖默认配置
             **kwargs: 其他参数
@@ -233,8 +242,8 @@ class SWIFTPipeline(nn.Module):
 
         elif strategy == "robust_percentile":
             # 改进的鲁棒百分位数策略
-            q_robust = kwargs.get("q_robust", 95.0)  # 降低从99.0到95.0，更保守
-            p_robust = kwargs.get("p_robust", 80.0)  # 降低从90.0到80.0，更保守
+            q_robust = kwargs.get("q_robust", 95.0)
+            p_robust = kwargs.get("p_robust", 80.0)
 
             tail_threshold = np.percentile(val_scores, q_robust)
             tail_scores = val_scores[val_scores > tail_threshold]
@@ -372,46 +381,73 @@ class SWIFTPipeline(nn.Module):
     def find_anomalies(
         self,
         data: np.ndarray,
-        threshold_strategy: Literal["percentile", "robust_percentile", "std", "adaptive"] = "adaptive",
-        use_validation_threshold: bool = True,
-        aggregation_method: str = "weighted_max",
+        threshold_strategy: Optional[Literal["percentile", "robust_percentile", "std", "adaptive"]] = None,
+        aggregation_method: Optional[str] = None,
         **kwargs,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """改进的异常检测函数
+        """SWIFT异常检测函数
 
         Args:
-            data: 测试数据
+            data: 测试数据（通常是完整的total_data，包含异常）
             threshold_strategy: 阈值计算策略
-            use_validation_threshold: 是否使用验证集阈值（False时使用测试数据自身计算阈值）
             aggregation_method: 分数聚合方法
             **kwargs: 其他参数
+
+        Returns:
+            predictions: 异常预测标签 (0: 正常, 1: 异常)
+            scores: 异常分数
         """
         if not self.fitted:
             raise ValueError("Please fit the model first!")
 
-        print(f"Scoring anomalies on test data using '{aggregation_method}' aggregation...")
+        # 使用配置文件中的默认值
+        if threshold_strategy is None:
+            threshold_strategy = self.anomaly_config["threshold_strategy"]
+        if aggregation_method is None:
+            aggregation_method = self.anomaly_config["aggregation_method"]
+
+        # 类型断言确保不为None
+        assert threshold_strategy is not None
+        assert aggregation_method is not None
+
+        print(f"🔍 Starting anomaly detection on {len(data)} data points...")
+        print(f"📊 Using '{aggregation_method}' aggregation method")
+
+        # 计算测试数据的异常分数
         test_scores = self.score_anomalies(data, aggregation_method=aggregation_method)
 
-        if use_validation_threshold:
-            # 使用验证集计算阈值（传统方法）
-            if self.validation_scores is None:
-                raise RuntimeError("Validation scores were not cached. Please check the fit() method.")
-            threshold_scores = self.validation_scores
-            print("Using validation set for threshold calculation...")
-        else:
-            # 使用测试数据自身计算阈值（更保守的方法）
-            threshold_scores = test_scores
-            print("Using test data itself for threshold calculation (unsupervised mode)...")
+        # 使用验证集计算阈值（标准做法）
+        if self.validation_scores is None:
+            raise RuntimeError(
+                "Validation scores were not cached. Please check the fit() method. "
+                "Make sure the model was trained with validation data."
+            )
 
-        threshold = self._calculate_threshold(threshold_scores, strategy=threshold_strategy, **kwargs)
-        print(f"Anomaly threshold determined: {threshold:.6f}")
+        # print("📏 Using validation set scores for threshold calculation")
+        # print(f"   Validation set size: {len(self.validation_scores)}")
+        # print(
+        #     f"   Validation score range: [{np.min(self.validation_scores):.4f}, {np.max(self.validation_scores):.4f}]"
+        # )
+        # print(f"   Test score range: [{np.min(test_scores):.4f}, {np.max(test_scores):.4f}]")
 
+        # 计算阈值
+        threshold = self._calculate_threshold(self.validation_scores, strategy=threshold_strategy, **kwargs)
+        # print(f"🎯 Anomaly threshold determined: {threshold:.6f}")
+
+        # 生成预测结果
         predictions = (test_scores > threshold).astype(int)
 
-        # 输出一些统计信息
+        # 输出统计信息
         anomaly_count = np.sum(predictions)
         anomaly_rate = anomaly_count / len(predictions)
-        print(f"Detected {anomaly_count} anomalies out of {len(predictions)} points ({anomaly_rate:.3%})")
+        # print(f"🚨 Detected {anomaly_count} anomalies out of {len(predictions)} points ({anomaly_rate:.3%})")
+
+        # 提供验证集的参考信息
+        val_anomaly_count = np.sum(self.validation_scores > threshold)
+        val_anomaly_rate = val_anomaly_count / len(self.validation_scores)
+        # print(
+        #     f"📊 For reference: {val_anomaly_count} points in validation set would be flagged as anomalies ({val_anomaly_rate:.3%})"
+        # )
 
         return predictions, test_scores
 
@@ -422,7 +458,8 @@ def swift_score_anomalies(data: np.ndarray, config: Dict[str, Any]) -> np.ndarra
     """
     pipeline = SWIFTPipeline(config)
     pipeline.fit(data)
-    scores = pipeline.score_anomalies(data)
+    aggregation_method = config["anomaly_detection"]["aggregation_method"]
+    scores = pipeline.score_anomalies(data, aggregation_method=aggregation_method)
 
     return scores
 

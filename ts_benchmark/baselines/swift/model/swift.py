@@ -227,6 +227,10 @@ class SWIFT(nn.Module):
         d_head: int,
         d_ff: int,
         dropout: float,
+        attention_dropout: float,
+        num_gat_heads: int,
+        gat_head_dim: int,
+        gat_dropout_rate: float,
         rec_head_dropout: float,
         d_model: int,
         ccd_align_temperature: float,
@@ -268,6 +272,9 @@ class SWIFT(nn.Module):
         self.masker = GATChannelMasker(
             node_feature_dim=patch_size,
             num_features=self.extended_num_features,
+            num_gat_heads=num_gat_heads,
+            gat_head_dim=gat_head_dim,
+            dropout_rate=gat_dropout_rate,
         )
 
         self.d_model = d_model
@@ -278,6 +285,7 @@ class SWIFT(nn.Module):
             d_ff=d_ff,
             d_head=d_head,
             dropout=dropout,
+            attention_dropout=attention_dropout,
             patch_dim=patch_size,
             d_model=d_model,
             ccd_temperature=ccd_align_temperature,

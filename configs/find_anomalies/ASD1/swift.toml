@@ -5,6 +5,8 @@
 [anomaly_detection]
 scale_score_lambda = 0.2 # 评分函数中尺度域分数权重
 anomaly_ratio = 3.0      # 异常率 x %
+threshold_strategy = "adaptive"        # 阈值计算策略 ["percentile", "robust_percentile", "std", "adaptive"]
+aggregation_method = "weighted_max"    # 分数聚合方法 ["mean", "max", "weighted_max"]
 
 
 # ----------------------------------------  
@@ -43,6 +45,13 @@ num_heads = 2  # 多头注意力头数
 d_head = 64    # 注意力头维度
 d_ff = 128     # 前馈网络的隐藏层维度
 dropout = 0.2  # Transformer dropout 率
+attention_dropout = 0.8    # 注意力机制中的dropout率
+
+# GAT通道掩码器参数
+num_gat_heads = 4          # GAT注意力头数
+gat_head_dim = 16          # 每个GAT注意力头的维度
+gat_dropout_rate = 0.1     # GAT注意力权重的dropout率
+
 
 # ----------------------------------------
 # --------- 模型 (时尺重构模块) ----------
@@ -75,3 +84,5 @@ ccd_regular_lambda = 0.1
 ccd_align_lambda = 1.0
 scale_loss_lambda = 0.5     # 尺度域辅助损失权重
 ccd_loss_lambda = 0.001     # 通道相关性发掘损失权重
+time_loss_delta = 1.0       # HuberLoss的delta参数 (时域损失函数)
+scale_loss_delta = 1.0      # HuberLoss的delta参数 (尺度域损失函数)
