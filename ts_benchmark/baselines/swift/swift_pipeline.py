@@ -196,7 +196,7 @@ class SWIFTPipeline(nn.Module):
         if self.val_data is not None:
             self.validation_scores = self.score_anomalies(self.val_data)
         self.model.train()
-        print("Fitting process complete. Validation scores are cached for threshold calculation.")
+        # print("Fitting process complete. Validation scores are cached for threshold calculation.")
 
     def validate(self, val_dataloader, loss_fn):
         self.model.eval()  # -> eval
@@ -234,13 +234,15 @@ class SWIFTPipeline(nn.Module):
         if anomaly_ratio is None:
             anomaly_ratio = self.anomaly_ratio
 
-        print(f"Calculating threshold using '{strategy}' strategy with anomaly_ratio={anomaly_ratio:.3f}...")
+        # print(f"Calculating threshold using '{strategy}' strategy with anomaly_ratio={anomaly_ratio:.3f}...")
 
         if strategy == "percentile":
+            print("Threshold strategy: percentile")
             # 百分位数策略
             threshold = np.percentile(val_scores, 100 - anomaly_ratio)
 
         elif strategy == "robust_percentile":
+            print("Threshold strategy: robust_percentile")
             # 改进的鲁棒百分位数策略
             q_robust = kwargs.get("q_robust", 95.0)
             p_robust = kwargs.get("p_robust", 80.0)
@@ -253,18 +255,20 @@ class SWIFTPipeline(nn.Module):
                 return float(np.percentile(val_scores, 100 - anomaly_ratio))
 
             final_threshold = np.percentile(tail_scores, p_robust)
-            print(f"  Robust params: q={q_robust}, p={p_robust}")
+            # print(f"  Robust params: q={q_robust}, p={p_robust}")
             threshold = final_threshold
 
         elif strategy == "std":
+            print("Threshold strategy: std")
             # 标准差策略
             n_std = kwargs.get("n_std", 2.5)  # 降低从3.0到2.5，更敏感
             mean = np.mean(val_scores)
             std = np.std(val_scores)
             threshold = mean + n_std * std
-            print(f"  STD params: mean={mean:.4f}, std={std:.4f}, n_std={n_std}")
+            # print(f"  STD params: mean={mean:.4f}, std={std:.4f}, n_std={n_std}")
 
         elif strategy == "adaptive":
+            print("Threshold strategy: adaptive")
             # 新增：自适应阈值策略
             # 结合多种方法，根据数据分布特征选择最优策略
 
@@ -275,7 +279,7 @@ class SWIFTPipeline(nn.Module):
 
             # 根据偏度选择策略
             if abs(skewness) > 1.5:  # 高偏度，使用鲁棒方法
-                print(f"  High skewness detected ({skewness:.3f}), using robust method...")
+                # print(f"  High skewness detected ({skewness:.3f}), using robust method...")
                 q_robust = 92.0 + min(3.0, float(abs(skewness)))  # 动态调整
                 tail_threshold = np.percentile(val_scores, q_robust)
                 tail_scores = val_scores[val_scores > tail_threshold]
@@ -285,7 +289,7 @@ class SWIFTPipeline(nn.Module):
                 else:
                     threshold = np.percentile(val_scores, 100 - anomaly_ratio)
             else:  # 低偏度，使用改进的百分位数方法
-                print(f"  Normal distribution detected (skewness={skewness:.3f}), using percentile method...")
+                # print(f"  Normal distribution detected (skewness={skewness:.3f}), using percentile method...")
                 # 使用更保守的百分位数
                 base_percentile = 100 - anomaly_ratio
                 # 根据标准差调整
@@ -293,7 +297,7 @@ class SWIFTPipeline(nn.Module):
                 adjusted_percentile = base_percentile - min(2.0, float(cv * 10))  # 动态调整
                 threshold = np.percentile(val_scores, max(90.0, adjusted_percentile))
 
-            print(f"  Adaptive params: skewness={skewness:.3f}, final_threshold={threshold:.6f}")
+            # print(f"  Adaptive params: skewness={skewness:.3f}, final_threshold={threshold:.6f}")
 
         else:
             raise ValueError(f"Unknown threshold strategy: {strategy}")
@@ -308,7 +312,11 @@ class SWIFTPipeline(nn.Module):
             return 0.0
         return float(np.mean(((data - mean) / std) ** 3))
 
-    def score_anomalies(self, data: np.ndarray, aggregation_method: str = "weighted_max") -> np.ndarray:
+    def score_anomalies(
+        self,
+        data: np.ndarray,
+        aggregation_method: Literal["mean", "max", "weighted_max"] = "weighted_max",
+    ) -> np.ndarray:
         """改进的异常分数计算，支持多种聚合方法"""
         if not self.fitted:
             raise ValueError("Please fit the model first!")
@@ -364,10 +372,13 @@ class SWIFTPipeline(nn.Module):
         counts[counts == 0] = 1
 
         if aggregation_method == "mean":
+            print("Aggregation method: mean")
             final_scores = anomaly_scores_sum / counts
         elif aggregation_method == "max":
+            print("Aggregation method: max")
             final_scores = anomaly_scores_max
         elif aggregation_method == "weighted_max":
+            print("Aggregation method: weighted_max")
             # 加权最大值：结合平均值和最大值
             mean_scores = anomaly_scores_sum / counts
             alpha = 0.3  # 平均值权重
@@ -381,8 +392,8 @@ class SWIFTPipeline(nn.Module):
     def find_anomalies(
         self,
         data: np.ndarray,
-        threshold_strategy: Optional[Literal["percentile", "robust_percentile", "std", "adaptive"]] = None,
-        aggregation_method: Optional[str] = None,
+        threshold_strategy: Literal["percentile", "robust_percentile", "std", "adaptive"] = "adaptive",
+        aggregation_method: Literal["mean", "max", "weighted_max"] = "weighted_max",
         **kwargs,
     ) -> tuple[np.ndarray, np.ndarray]:
         """SWIFT异常检测函数
@@ -399,19 +410,6 @@ class SWIFTPipeline(nn.Module):
         """
         if not self.fitted:
             raise ValueError("Please fit the model first!")
-
-        # 使用配置文件中的默认值
-        if threshold_strategy is None:
-            threshold_strategy = self.anomaly_config["threshold_strategy"]
-        if aggregation_method is None:
-            aggregation_method = self.anomaly_config["aggregation_method"]
-
-        # 类型断言确保不为None
-        assert threshold_strategy is not None
-        assert aggregation_method is not None
-
-        print(f"🔍 Starting anomaly detection on {len(data)} data points...")
-        print(f"📊 Using '{aggregation_method}' aggregation method")
 
         # 计算测试数据的异常分数
         test_scores = self.score_anomalies(data, aggregation_method=aggregation_method)

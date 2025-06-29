@@ -23,7 +23,7 @@ if __name__ == "__main__":
     labels = df.iloc[:, -1].to_numpy()
 
     predictions = swift_find_anomalies(data=data.values, config=swift_config)
-    print(affiliation_f(labels, predictions))
+    print(f"Affiliation F1 Score: {affiliation_f(labels, predictions)}")
     # np.savetxt("predictions.csv", predictions, delimiter=",", fmt="%d")
 
     # plot_anomaly_labels(
