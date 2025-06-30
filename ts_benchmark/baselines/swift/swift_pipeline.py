@@ -234,15 +234,11 @@ class SWIFTPipeline(nn.Module):
         if anomaly_ratio is None:
             anomaly_ratio = self.anomaly_ratio
 
-        # print(f"Calculating threshold using '{strategy}' strategy with anomaly_ratio={anomaly_ratio:.3f}...")
-
         if strategy == "percentile":
-            print("Threshold strategy: percentile")
             # 百分位数策略
             threshold = np.percentile(val_scores, 100 - anomaly_ratio)
 
         elif strategy == "robust_percentile":
-            print("Threshold strategy: robust_percentile")
             # 改进的鲁棒百分位数策略
             q_robust = kwargs.get("q_robust", 95.0)
             p_robust = kwargs.get("p_robust", 80.0)
@@ -259,7 +255,6 @@ class SWIFTPipeline(nn.Module):
             threshold = final_threshold
 
         elif strategy == "std":
-            print("Threshold strategy: std")
             # 标准差策略
             n_std = kwargs.get("n_std", 2.5)  # 降低从3.0到2.5，更敏感
             mean = np.mean(val_scores)
@@ -268,7 +263,6 @@ class SWIFTPipeline(nn.Module):
             # print(f"  STD params: mean={mean:.4f}, std={std:.4f}, n_std={n_std}")
 
         elif strategy == "adaptive":
-            print("Threshold strategy: adaptive")
             # 新增：自适应阈值策略
             # 结合多种方法，根据数据分布特征选择最优策略
 
@@ -372,13 +366,10 @@ class SWIFTPipeline(nn.Module):
         counts[counts == 0] = 1
 
         if aggregation_method == "mean":
-            print("Aggregation method: mean")
             final_scores = anomaly_scores_sum / counts
         elif aggregation_method == "max":
-            print("Aggregation method: max")
             final_scores = anomaly_scores_max
         elif aggregation_method == "weighted_max":
-            print("Aggregation method: weighted_max")
             # 加权最大值：结合平均值和最大值
             mean_scores = anomaly_scores_sum / counts
             alpha = 0.3  # 平均值权重

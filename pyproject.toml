@@ -12,5 +12,7 @@ dependencies = [
     "scikit-learn>=1.7.0",
     "scipy>=1.15.3",
     "statsmodels>=0.14.4",
+    "tomli>=2.2.1",
+    "tomli-w>=1.2.0",
     "torch==2.5.0",
 ]
