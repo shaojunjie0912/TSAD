@@ -3,6 +3,7 @@
 
 datasets/
 results/
+logs/
 
 __pycache__/
 .venv/

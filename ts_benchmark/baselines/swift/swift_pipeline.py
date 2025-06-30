@@ -1,3 +1,5 @@
+import logging
+import os
 from typing import Any, Dict, Literal, Optional
 
 import numpy as np
@@ -45,6 +47,26 @@ class SWIFTPipeline(nn.Module):
 
     # train + val
     def fit(self, data: np.ndarray):
+        trial_number = self.config.get("trial_number", None)
+        logger = logging.getLogger(f"Trial-{trial_number}")
+        logger.setLevel(logging.INFO)
+        logger.propagate = False
+        if not logger.hasHandlers():
+            # 创建 logs 目录 (如果不存在)
+            log_dir = "logs"
+            os.makedirs(log_dir, exist_ok=True)
+
+            # 如果是 Optuna 运行，则为每个 trial 创建一个文件
+            if trial_number is not None:
+                log_file = os.path.join(log_dir, f"trial_{trial_number}.log")
+                file_handler = logging.FileHandler(log_file, mode="w")  # 'w' 模式会覆盖旧日志
+            else:  # 如果不是 Optuna 运行，则使用通用日志文件
+                file_handler = logging.FileHandler(os.path.join(log_dir, "training.log"), mode="w")
+
+            formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+            file_handler.setFormatter(formatter)
+            logger.addHandler(file_handler)
+
         train_ratio = self.data_config["train_ratio"]
         len_train = int(len(data) * train_ratio)
 
@@ -154,14 +176,6 @@ class SWIFTPipeline(nn.Module):
                     time_rec_loss + self.scale_loss_lambda * scale_rec_loss + self.ccd_loss_lambda * ccd_loss
                 )
 
-                # # ---- 添加这行用于诊断 ----
-                # if i % 100 == 0:  # 每100个batch打印一次
-                #     print(
-                #         f"batch {i}: time_loss={time_rec_loss.item():.4f}, "
-                #         f"scale_loss={scale_rec_loss.item():.4f}, "
-                #         f"ccd_loss={ccd_loss.item():.4f}"
-                #     )
-
                 train_loss.append(loss.item())
 
                 # --- 反向传播与更新 ---
@@ -174,11 +188,12 @@ class SWIFTPipeline(nn.Module):
             # --- Epoch 结束后的验证与打印 ---
             train_loss_avg = np.mean(train_loss)
             valid_loss = self.validate(self.val_dataloader, self.time_loss_fn)
-            print(
+            log_msg = (
                 f"Epoch [{epoch_idx+1}/{self.training_config['num_epochs']}], "
                 f"Train Loss: {train_loss_avg:.6f}, Valid Loss: {valid_loss:.6f}, "
                 f"LR: {self.optimizer.param_groups[0]['lr']:.6f}"
             )
+            logger.info(log_msg)
 
             self.early_stopping(float(valid_loss), self.model)
 
@@ -190,13 +205,17 @@ class SWIFTPipeline(nn.Module):
 
         self.fitted = True
         # 在训练结束后, 计算并缓存验证集分数用于阈值计算
-        # 注意：验证集可能包含少量异常，但这是异常检测的正常情况
         print("\nCalculating and caching validation scores for threshold calculation...")
         self.model.eval()
         if self.val_data is not None:
             self.validation_scores = self.score_anomalies(self.val_data)
         self.model.train()
-        # print("Fitting process complete. Validation scores are cached for threshold calculation.")
+
+        # 释放文件资源
+        if logger.hasHandlers():
+            for handler in logger.handlers[:]:
+                handler.close()
+                logger.removeHandler(handler)
 
     def validate(self, val_dataloader, loss_fn):
         self.model.eval()  # -> eval

@@ -45,7 +45,7 @@ num_heads = 2  # 多头注意力头数
 d_head = 64    # 注意力头维度
 d_ff = 128     # 前馈网络的隐藏层维度
 dropout = 0.2  # Transformer dropout 率
-attention_dropout = 0.8    # 注意力机制中的dropout率
+attention_dropout = 0.2    # 注意力机制中的dropout率
 
 # GAT通道掩码器参数
 num_gat_heads = 4          # GAT注意力头数
