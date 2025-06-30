@@ -7,7 +7,6 @@ echo ""
 .venv/bin/python ts_benchmark/tune_params.py \
     -c configs/find_anomalies/ASD1/swift.toml \
     -d datasets/ASD_dataset_1.csv \
-    --mode quick \
     -o configs/find_anomalies/ASD1/swift_optimized.toml
 
 echo ""

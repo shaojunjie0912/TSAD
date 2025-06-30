@@ -41,7 +41,7 @@ def update_config(base_config: Dict[str, Any], param_updates: Dict[str, Any]) ->
     return config
 
 
-def evaluate_config(data: np.ndarray, labels: np.ndarray, config: Dict[str, Any]) -> float:
+def evaluate_config(data: np.ndarray, labels: np.ndarray, config: Dict[str, Any]) -> float | None:
     """评估单个配置的性能"""
     try:
         predictions = swift_find_anomalies(data=data, config=config)
@@ -49,7 +49,7 @@ def evaluate_config(data: np.ndarray, labels: np.ndarray, config: Dict[str, Any]
         return score
     except Exception as e:
         print(f"配置评估失败: {e}")
-        return 0.0
+        return None
 
 
 def save_progress(progress_file: str, results: List[Dict], best_params: Dict, best_score: float):
@@ -60,8 +60,11 @@ def save_progress(progress_file: str, results: List[Dict], best_params: Dict, be
         "best_score": best_score,
         "completed_configs": len(results),
     }
-    with open(progress_file, "w") as f:
+    temp_file = progress_file + ".tmp"
+    with open(temp_file, "w") as f:
         json.dump(progress_data, f, indent=2)
+    # 写入成功后，再重命名
+    os.replace(temp_file, progress_file)
 
 
 def load_progress(progress_file: str) -> tuple[List[Dict], Dict, float, int]:
@@ -141,74 +144,7 @@ def quick_search_params(
 
         results.append({"params": param_updates, "score": score})
 
-        if score > best_score:
-            best_score = score
-            best_params = param_updates
-            print(f"🎉 发现更好配置! F1={score:.4f}")
-            # 立即保存新的最佳配置
-            save_optimal_config(base_config, best_params, output_path)
-
-        print(f"配置 {i+1}/{total_configs}: F1={score:.4f} | 当前最佳: {best_score:.4f}")
-
-        # 每次都保存进度
-        save_progress(progress_file, results, best_params, best_score)
-
-    return best_params, best_score
-
-
-def full_search_params(
-    data: np.ndarray,
-    labels: np.ndarray,
-    base_config: Dict[str, Any],
-    output_path: str,
-    progress_file: str = "full_tune_progress.json",
-) -> tuple[Dict[str, Any], float]:
-    """完整网格搜索（每个配置都实时保存）"""
-
-    # 完整搜索空间
-    param_grid = {
-        "anomaly_detection.scale_score_lambda": [0.1, 0.2, 0.3, 0.4],
-        "anomaly_detection.anomaly_ratio": [1.5, 2.0, 2.5, 3.0, 3.5],
-        "anomaly_detection.aggregation_method": ["mean", "max", "weighted_max"],
-        "model.CFM.num_layers": [3, 4, 6],
-        "model.CFM.d_cf": [64, 96, 128],
-        "model.CFM.d_model": [64, 96, 128],
-        "model.CFM.dropout": [0.1, 0.15, 0.2],
-        "training.learning_rate": [0.0005, 0.001, 0.002],
-    }
-
-    total_configs = int(np.prod([len(v) for v in param_grid.values()]))
-
-    # 尝试加载之前的进度
-    results, best_params, best_score, completed_configs = load_progress(progress_file)
-
-    if completed_configs > 0:
-        print(f"🔄 检测到之前的进度，已完成 {completed_configs}/{total_configs} 个配置")
-        print(f"📊 当前最佳分数: {best_score:.4f}")
-    else:
-        print(f"🆕 开始完整网格搜索，总计配置数: {total_configs}")
-
-    param_names = list(param_grid.keys())
-    param_values = list(param_grid.values())
-    all_combinations = list(itertools.product(*param_values))
-
-    for i, combination in enumerate(all_combinations):
-        # 跳过已完成的配置
-        if i < completed_configs:
-            continue
-
-        param_updates = dict(zip(param_names, combination))
-
-        # 确保d_model不小于d_cf
-        if param_updates["model.CFM.d_model"] < param_updates["model.CFM.d_cf"]:
-            param_updates["model.CFM.d_model"] = param_updates["model.CFM.d_cf"]
-
-        config = update_config(base_config, param_updates)
-        score = evaluate_config(data, labels, config)
-
-        results.append({"params": param_updates, "score": score})
-
-        if score > best_score:
+        if score is not None and score > best_score:
             best_score = score
             best_params = param_updates
             print(f"🎉 发现更好配置! F1={score:.4f}")
@@ -229,7 +165,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", "--config", type=str, required=True, help="基础配置文件路径")
     parser.add_argument("-d", "--dataset", type=str, required=True, help="数据集文件路径")
-    parser.add_argument("--mode", choices=["quick", "full"], default="quick", help="搜索模式")
     parser.add_argument(
         "-o",
         "--output",
@@ -245,8 +180,6 @@ if __name__ == "__main__":
 
     # 加载数据和配置
     print("🚀 开始SWIFT参数自动调优...")
-    print("💡 提示: 每个配置完成后都会自动保存最佳结果，可随时按Ctrl+C安全退出")
-    print("")
 
     base_config = load_config(args.config)
     df = pd.read_csv(args.dataset)
@@ -256,22 +189,17 @@ if __name__ == "__main__":
     # print(f"数据形状: {data.shape}, 异常点数量: {np.sum(labels)}")
 
     # 设置进度文件名
-    progress_file = f"{args.mode}_tune_progress.json"
+    progress_file = "tune_params_progress.json"
 
     if not args.resume and os.path.exists(progress_file):
-        print(f"⚠️  发现之前的进度文件 {progress_file}")
+        print(f"⚠️ 发现之前的进度文件 {progress_file}")
         response = input("是否继续之前的搜索? (y/n): ").lower().strip()
         if response != "y":
             os.remove(progress_file)
             print("已删除之前的进度文件，开始新的搜索")
 
-    # 执行参数搜索
-    if args.mode == "quick":
-        print("执行快速参数搜索...")
-        best_params, best_score = quick_search_params(data, labels, base_config, args.output, progress_file)
-    else:
-        print("执行完整网格搜索...")
-        best_params, best_score = full_search_params(data, labels, base_config, args.output, progress_file)
+    print("执行快速参数搜索...")
+    best_params, best_score = quick_search_params(data, labels, base_config, args.output, progress_file)
 
     print(f"\n🎉 搜索完成!")
     print(f"最佳F1分数: {best_score:.4f}")
