@@ -15,6 +15,7 @@ if __name__ == "__main__":
     # 加载配置文件
     swift_config: Dict[Any, Any]
     with open(args.config, "rb") as f:
+        print(f"加载配置文件: {args.config}")
         swift_config = tomllib.load(f)
 
     df = pd.read_csv(args.dataset)
@@ -24,14 +25,5 @@ if __name__ == "__main__":
 
     predictions = swift_find_anomalies(data=data.values, config=swift_config)
     print(f"Affiliation F1 Score: {affiliation_f(labels, predictions)}")
-    # np.savetxt("predictions.csv", predictions, delimiter=",", fmt="%d")
-
-    # plot_anomaly_labels(
-    #     data=data,
-    #     predictions=predictions,
-    #     results_dir="results",
-    #     dataset_name="common_dataset",
-    #     algorithm_name="SWIFT",
-    # )
 
     print("----------------- 🆗 -----------------")

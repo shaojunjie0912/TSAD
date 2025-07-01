@@ -6,6 +6,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.optim import lr_scheduler
+from tqdm import tqdm
 
 from .model.swift import SWIFT
 from .utils.training import EarlyStopping, get_dataloader
@@ -52,17 +53,16 @@ class SWIFTPipeline(nn.Module):
         logger.setLevel(logging.INFO)
         logger.propagate = False
         if not logger.hasHandlers():
-            # 创建 logs 目录 (如果不存在)
-            log_dir = "logs"
-            os.makedirs(log_dir, exist_ok=True)
-
             # 如果是 Optuna 运行，则为每个 trial 创建一个文件
             if trial_number is not None:
+                log_dir = "logs_optuna"
+                os.makedirs(log_dir, exist_ok=True)
                 log_file = os.path.join(log_dir, f"trial_{trial_number}.log")
                 file_handler = logging.FileHandler(log_file, mode="w")  # 'w' 模式会覆盖旧日志
             else:  # 如果不是 Optuna 运行，则使用通用日志文件
+                log_dir = "logs"
+                os.makedirs(log_dir, exist_ok=True)
                 file_handler = logging.FileHandler(os.path.join(log_dir, "training.log"), mode="w")
-
             formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
             file_handler.setFormatter(formatter)
             logger.addHandler(file_handler)
@@ -143,10 +143,9 @@ class SWIFTPipeline(nn.Module):
 
         train_steps = len(self.train_dataloader)
 
-        # NOTE: 一个优化器
+        # 优化器
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.training_config["learning_rate"])
-
-        # NOTE: 一个调度器
+        # 学习率调度器
         self.scheduler = lr_scheduler.OneCycleLR(
             optimizer=self.optimizer,
             steps_per_epoch=train_steps,
@@ -158,11 +157,17 @@ class SWIFTPipeline(nn.Module):
         # ----------------------------------------
         # ----------------- 训练 -----------------
         # ----------------------------------------
-        for epoch_idx in range(self.training_config["num_epochs"]):
+        # 创建epoch进度条
+        epoch_pbar = tqdm(range(self.training_config["num_epochs"]), desc="训练进度", unit="epoch")
+
+        for epoch_idx in epoch_pbar:
             self.model.train()
             train_loss = []
 
-            for i, (x, _) in enumerate(self.train_dataloader):
+            # 创建batch进度条
+            batch_pbar = tqdm(self.train_dataloader, desc=f"Epoch {epoch_idx+1}", unit="batch", leave=False)
+
+            for i, (x, _) in enumerate(batch_pbar):
                 self.optimizer.zero_grad()  # 梯度清零
 
                 x = x.float().to(self.device)
@@ -185,9 +190,25 @@ class SWIFTPipeline(nn.Module):
                 # 在每个 batch 后更新学习率
                 self.scheduler.step()
 
+                # 更新batch进度条
+                current_loss = np.mean(train_loss)
+                batch_pbar.set_postfix(
+                    {"Loss": f"{current_loss:.6f}", "LR": f'{self.optimizer.param_groups[0]["lr"]:.6f}'}
+                )
+
             # --- Epoch 结束后的验证与打印 ---
             train_loss_avg = np.mean(train_loss)
             valid_loss = self.validate(self.val_dataloader, self.time_loss_fn)
+
+            # 更新epoch进度条
+            epoch_pbar.set_postfix(
+                {
+                    "Train Loss": f"{train_loss_avg:.6f}",
+                    "Valid Loss": f"{valid_loss:.6f}",
+                    "LR": f'{self.optimizer.param_groups[0]["lr"]:.6f}',
+                }
+            )
+
             log_msg = (
                 f"Epoch [{epoch_idx+1}/{self.training_config['num_epochs']}], "
                 f"Train Loss: {train_loss_avg:.6f}, Valid Loss: {valid_loss:.6f}, "
@@ -198,17 +219,18 @@ class SWIFTPipeline(nn.Module):
             self.early_stopping(float(valid_loss), self.model)
 
             if self.early_stopping.should_stop:
-                print("Early stopping triggered. Loading best model weights.")
-                # 在中断循环前，自动加载性能最佳的模型权重
+                logger.info("Early stopping triggered. Loading best model weights.")
                 self.early_stopping.load_best_weights(self.model)
                 break
 
         self.fitted = True
-        # 在训练结束后, 计算并缓存验证集分数用于阈值计算
-        print("\nCalculating and caching validation scores for threshold calculation...")
+        # 缓存验证集异常分数
         self.model.eval()
         if self.val_data is not None:
-            self.validation_scores = self.score_anomalies(self.val_data)
+            print("正在缓存验证集异常分数...")
+            self.validation_scores = self.score_anomalies(
+                self.val_data, aggregation_method=self.anomaly_config["aggregation_method"]
+            )
         self.model.train()
 
         # 释放文件资源
@@ -221,46 +243,39 @@ class SWIFTPipeline(nn.Module):
         self.model.eval()  # -> eval
         total_loss = []
         with torch.no_grad():
-            for x, _ in val_dataloader:
+            # 创建验证进度条
+            val_pbar = tqdm(val_dataloader, desc="验证中", unit="batch", leave=False)
+            for x, _ in val_pbar:
                 x = x.float().to(self.device)
                 x_orig, x_hat, s_orig, s_hat, _ = self.model(x)
                 time_rec_loss = loss_fn(x_hat, x_orig)
                 scale_rec_loss = loss_fn(s_hat, s_orig)
                 loss = time_rec_loss + self.scale_loss_lambda * scale_rec_loss
                 total_loss.append(loss.item())
+
+                # 更新验证进度条
+                if len(total_loss) > 0:
+                    val_pbar.set_postfix({"Valid Loss": f"{np.mean(total_loss):.6f}"})
+
         self.model.train()  # -> train
         return np.mean(total_loss)
 
     def _calculate_threshold(
         self,
         val_scores: np.ndarray,
-        strategy: Literal["percentile", "robust_percentile", "std", "adaptive"] = "adaptive",
-        anomaly_ratio: Optional[float] = None,
-        **kwargs,
+        strategy: Literal["percentile", "robust_percentile", "std", "adaptive"],
+        anomaly_ratio: float,
     ) -> float:
-        """根据不同策略计算异常阈值
-
-        使用验证集的异常分数分布来计算阈值。
-        注意：验证集可能包含少量异常，但异常率较小，
-        模型需要从大部分正常数据中学习并设定合理的阈值。
-
-        Args:
-            val_scores: 验证集异常分数（可能包含少量异常）
-            strategy: 阈值计算策略
-            anomaly_ratio: 异常比例，如果提供则覆盖默认配置
-            **kwargs: 其他参数
-        """
-        if anomaly_ratio is None:
-            anomaly_ratio = self.anomaly_ratio
-
+        """根据不同策略计算异常阈值"""
         if strategy == "percentile":
             # 百分位数策略
             threshold = np.percentile(val_scores, 100 - anomaly_ratio)
 
         elif strategy == "robust_percentile":
             # 改进的鲁棒百分位数策略
-            q_robust = kwargs.get("q_robust", 95.0)
-            p_robust = kwargs.get("p_robust", 80.0)
+            # TODO: 为什么是 95.0? 80.0?
+            q_robust = 95.0
+            p_robust = 80.0
 
             tail_threshold = np.percentile(val_scores, q_robust)
             tail_scores = val_scores[val_scores > tail_threshold]
@@ -270,16 +285,14 @@ class SWIFTPipeline(nn.Module):
                 return float(np.percentile(val_scores, 100 - anomaly_ratio))
 
             final_threshold = np.percentile(tail_scores, p_robust)
-            # print(f"  Robust params: q={q_robust}, p={p_robust}")
             threshold = final_threshold
 
         elif strategy == "std":
-            # 标准差策略
-            n_std = kwargs.get("n_std", 2.5)  # 降低从3.0到2.5，更敏感
+            # 标准差策略 # TODO: 为什么是 2.5?
+            n_std = 2.5
             mean = np.mean(val_scores)
             std = np.std(val_scores)
             threshold = mean + n_std * std
-            # print(f"  STD params: mean={mean:.4f}, std={std:.4f}, n_std={n_std}")
 
         elif strategy == "adaptive":
             # 新增：自适应阈值策略
@@ -291,29 +304,27 @@ class SWIFTPipeline(nn.Module):
             skewness = self._calculate_skewness(val_scores)
 
             # 根据偏度选择策略
+            # TODO: 为什么是 1.5?
             if abs(skewness) > 1.5:  # 高偏度，使用鲁棒方法
-                # print(f"  High skewness detected ({skewness:.3f}), using robust method...")
+                # TODO: 为什么是 92.0? 3.0?
                 q_robust = 92.0 + min(3.0, float(abs(skewness)))  # 动态调整
                 tail_threshold = np.percentile(val_scores, q_robust)
                 tail_scores = val_scores[val_scores > tail_threshold]
 
                 if len(tail_scores) > 0:
+                    # TODO: 为什么是 75.0?
                     threshold = np.percentile(tail_scores, 75.0)
                 else:
                     threshold = np.percentile(val_scores, 100 - anomaly_ratio)
             else:  # 低偏度，使用改进的百分位数方法
-                # print(f"  Normal distribution detected (skewness={skewness:.3f}), using percentile method...")
                 # 使用更保守的百分位数
                 base_percentile = 100 - anomaly_ratio
                 # 根据标准差调整
                 cv = std_score / (mean_score + 1e-8)  # 变异系数
+                # TODO: 为什么是 2.0?
                 adjusted_percentile = base_percentile - min(2.0, float(cv * 10))  # 动态调整
+                # TODO: 为什么是 90.0?
                 threshold = np.percentile(val_scores, max(90.0, adjusted_percentile))
-
-            # print(f"  Adaptive params: skewness={skewness:.3f}, final_threshold={threshold:.6f}")
-
-        else:
-            raise ValueError(f"Unknown threshold strategy: {strategy}")
 
         return float(threshold)
 
@@ -323,12 +334,12 @@ class SWIFTPipeline(nn.Module):
         std = np.std(data)
         if std == 0:
             return 0.0
-        return float(np.mean(((data - mean) / std) ** 3))
+        return float(np.mean(((data - mean) / std) ** 3))  # TODO: 为什么是 3?
 
     def score_anomalies(
         self,
         data: np.ndarray,
-        aggregation_method: Literal["mean", "max", "weighted_max"] = "weighted_max",
+        aggregation_method: Literal["mean", "max", "weighted_max"],
     ) -> np.ndarray:
         """改进的异常分数计算，支持多种聚合方法"""
         if not self.fitted:
@@ -348,11 +359,13 @@ class SWIFTPipeline(nn.Module):
         self.model.eval()
 
         anomaly_scores_sum = np.zeros(len(data))
-        anomaly_scores_max = np.zeros(len(data))  # 新增：最大值聚合
+        anomaly_scores_max = np.zeros(len(data))
         counts = np.zeros(len(data))
 
         with torch.no_grad():
-            for i, (x, _, padding_mask, start_indices) in enumerate(self.predict_dataloader):
+            # 创建异常分数计算进度条
+            score_pbar = tqdm(self.predict_dataloader, desc="计算异常分数", unit="batch")
+            for i, (x, _, padding_mask, start_indices) in enumerate(score_pbar):
                 x = x.float().to(self.device)
                 padding_mask = padding_mask.float().to(self.device)
                 x_orig, x_hat, s_orig, s_hat, _ = self.model(x)
@@ -374,88 +387,51 @@ class SWIFTPipeline(nn.Module):
                     actual_end = min(end, len(data))
                     valid_length = actual_end - start
 
-                    # 原有的求和聚合
+                    # 求和聚合
                     anomaly_scores_sum[start:actual_end] += window_score[:valid_length]
-                    # 新增的最大值聚合
+                    # 最大值聚合
                     anomaly_scores_max[start:actual_end] = np.maximum(
                         anomaly_scores_max[start:actual_end], window_score[:valid_length]
                     )
                     counts[start:actual_end] += window_mask[:valid_length]
 
+                # 更新进度条信息
+                progress_pct = (i + 1) / len(self.predict_dataloader) * 100
+                score_pbar.set_postfix({"进度": f"{progress_pct:.1f}%"})
+
         counts[counts == 0] = 1
 
+        # 均值聚合
         if aggregation_method == "mean":
             final_scores = anomaly_scores_sum / counts
+        # 最大值聚合
         elif aggregation_method == "max":
             final_scores = anomaly_scores_max
+        # 加权最大值聚合
         elif aggregation_method == "weighted_max":
-            # 加权最大值：结合平均值和最大值
             mean_scores = anomaly_scores_sum / counts
-            alpha = 0.3  # 平均值权重
+            alpha = 0.3  # 均值权重
             beta = 0.7  # 最大值权重
             final_scores = alpha * mean_scores + beta * anomaly_scores_max
-        else:
-            raise ValueError(f"Unknown aggregation method: {aggregation_method}")
 
         return final_scores
 
     def find_anomalies(
         self,
         data: np.ndarray,
-        threshold_strategy: Literal["percentile", "robust_percentile", "std", "adaptive"] = "adaptive",
-        aggregation_method: Literal["mean", "max", "weighted_max"] = "weighted_max",
-        **kwargs,
+        anomaly_ratio: float,
+        threshold_strategy: Literal["percentile", "robust_percentile", "std", "adaptive"],
+        aggregation_method: Literal["mean", "max", "weighted_max"],
     ) -> tuple[np.ndarray, np.ndarray]:
-        """SWIFT异常检测函数
-
-        Args:
-            data: 测试数据（通常是完整的total_data，包含异常）
-            threshold_strategy: 阈值计算策略
-            aggregation_method: 分数聚合方法
-            **kwargs: 其他参数
-
-        Returns:
-            predictions: 异常预测标签 (0: 正常, 1: 异常)
-            scores: 异常分数
-        """
-        if not self.fitted:
+        if not self.fitted or self.validation_scores is None:
             raise ValueError("Please fit the model first!")
 
-        # 计算测试数据的异常分数
+        print("正在查找异常点...")
         test_scores = self.score_anomalies(data, aggregation_method=aggregation_method)
-
-        # 使用验证集计算阈值（标准做法）
-        if self.validation_scores is None:
-            raise RuntimeError(
-                "Validation scores were not cached. Please check the fit() method. "
-                "Make sure the model was trained with validation data."
-            )
-
-        # print("📏 Using validation set scores for threshold calculation")
-        # print(f"   Validation set size: {len(self.validation_scores)}")
-        # print(
-        #     f"   Validation score range: [{np.min(self.validation_scores):.4f}, {np.max(self.validation_scores):.4f}]"
-        # )
-        # print(f"   Test score range: [{np.min(test_scores):.4f}, {np.max(test_scores):.4f}]")
-
-        # 计算阈值
-        threshold = self._calculate_threshold(self.validation_scores, strategy=threshold_strategy, **kwargs)
-        # print(f"🎯 Anomaly threshold determined: {threshold:.6f}")
-
-        # 生成预测结果
+        threshold = self._calculate_threshold(
+            self.validation_scores, strategy=threshold_strategy, anomaly_ratio=anomaly_ratio
+        )
         predictions = (test_scores > threshold).astype(int)
-
-        # 输出统计信息
-        anomaly_count = np.sum(predictions)
-        anomaly_rate = anomaly_count / len(predictions)
-        # print(f"🚨 Detected {anomaly_count} anomalies out of {len(predictions)} points ({anomaly_rate:.3%})")
-
-        # 提供验证集的参考信息
-        val_anomaly_count = np.sum(self.validation_scores > threshold)
-        val_anomaly_rate = val_anomaly_count / len(self.validation_scores)
-        # print(
-        #     f"📊 For reference: {val_anomaly_count} points in validation set would be flagged as anomalies ({val_anomaly_rate:.3%})"
-        # )
 
         return predictions, test_scores
 
@@ -466,8 +442,8 @@ def swift_score_anomalies(data: np.ndarray, config: Dict[str, Any]) -> np.ndarra
     """
     pipeline = SWIFTPipeline(config)
     pipeline.fit(data)
-    aggregation_method = config["anomaly_detection"]["aggregation_method"]
-    scores = pipeline.score_anomalies(data, aggregation_method=aggregation_method)
+    anomaly_config = config["anomaly_detection"]
+    scores = pipeline.score_anomalies(data, aggregation_method=anomaly_config["aggregation_method"])
 
     return scores
 
@@ -477,7 +453,13 @@ def swift_find_anomalies(data: np.ndarray, config: Dict[str, Any]) -> np.ndarray
     找到异常点
     """
     pipeline = SWIFTPipeline(config)
+    anomaly_config = config["anomaly_detection"]
     pipeline.fit(data)
-    predictions, scores = pipeline.find_anomalies(data)
+    predictions, _ = pipeline.find_anomalies(
+        data,
+        anomaly_ratio=anomaly_config["anomaly_ratio"],
+        threshold_strategy=anomaly_config["threshold_strategy"],
+        aggregation_method=anomaly_config["aggregation_method"],
+    )
 
     return predictions

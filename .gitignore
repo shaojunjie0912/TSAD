@@ -4,6 +4,12 @@
 datasets/
 results/
 logs/
+logs_optuna/
+
+# Optuna相关文件
+*.db
+optuna-storage.db
+study-*.db
 
 __pycache__/
 .venv/
