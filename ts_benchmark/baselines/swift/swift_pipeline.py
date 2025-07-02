@@ -31,6 +31,12 @@ class SWIFTPipeline(nn.Module):
         self.anomaly_config = config["anomaly_detection"]
         self.scale_score_lambda = self.anomaly_config["scale_score_lambda"]
         self.anomaly_ratio: float = self.anomaly_config["anomaly_ratio"]
+        self.aggregation_method: Literal["mean", "max", "weighted_max"] = self.anomaly_config[
+            "aggregation_method"
+        ]
+        self.threshold_strategy: Literal["percentile", "robust_percentile", "std", "adaptive"] = (
+            self.anomaly_config["threshold_strategy"]
+        )
 
         self.batch_size: int = self.training_config["batch_size"]
         self.seq_len: int = self.data_config["seq_len"]
@@ -55,12 +61,12 @@ class SWIFTPipeline(nn.Module):
         if not logger.hasHandlers():
             # 如果是 Optuna 运行，则为每个 trial 创建一个文件
             if trial_number is not None:
-                log_dir = "logs_optuna"
+                log_dir = "logs/optuna"
                 os.makedirs(log_dir, exist_ok=True)
                 log_file = os.path.join(log_dir, f"trial_{trial_number}.log")
                 file_handler = logging.FileHandler(log_file, mode="w")  # 'w' 模式会覆盖旧日志
             else:  # 如果不是 Optuna 运行，则使用通用日志文件
-                log_dir = "logs"
+                log_dir = "logs/normal"
                 os.makedirs(log_dir, exist_ok=True)
                 file_handler = logging.FileHandler(os.path.join(log_dir, "training.log"), mode="w")
             formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
@@ -228,9 +234,7 @@ class SWIFTPipeline(nn.Module):
         self.model.eval()
         if self.val_data is not None:
             print("正在缓存验证集异常分数...")
-            self.validation_scores = self.score_anomalies(
-                self.val_data, aggregation_method=self.anomaly_config["aggregation_method"]
-            )
+            self.validation_scores = self.score_anomalies(self.val_data)
         self.model.train()
 
         # 释放文件资源
@@ -260,18 +264,13 @@ class SWIFTPipeline(nn.Module):
         self.model.train()  # -> train
         return np.mean(total_loss)
 
-    def _calculate_threshold(
-        self,
-        val_scores: np.ndarray,
-        strategy: Literal["percentile", "robust_percentile", "std", "adaptive"],
-        anomaly_ratio: float,
-    ) -> float:
+    def _calculate_threshold(self, val_scores: np.ndarray) -> float:
         """根据不同策略计算异常阈值"""
-        if strategy == "percentile":
+        if self.threshold_strategy == "percentile":
             # 百分位数策略
-            threshold = np.percentile(val_scores, 100 - anomaly_ratio)
+            threshold = np.percentile(val_scores, 100 - self.anomaly_ratio)
 
-        elif strategy == "robust_percentile":
+        elif self.threshold_strategy == "robust_percentile":
             # 改进的鲁棒百分位数策略
             # TODO: 为什么是 95.0? 80.0?
             q_robust = 95.0
@@ -282,19 +281,19 @@ class SWIFTPipeline(nn.Module):
 
             if len(tail_scores) == 0:
                 print(f"  Warning: No scores above {q_robust}th percentile. Using percentile fallback.")
-                return float(np.percentile(val_scores, 100 - anomaly_ratio))
+                return float(np.percentile(val_scores, 100 - self.anomaly_ratio))
 
             final_threshold = np.percentile(tail_scores, p_robust)
             threshold = final_threshold
 
-        elif strategy == "std":
+        elif self.threshold_strategy == "std":
             # 标准差策略 # TODO: 为什么是 2.5?
             n_std = 2.5
             mean = np.mean(val_scores)
             std = np.std(val_scores)
             threshold = mean + n_std * std
 
-        elif strategy == "adaptive":
+        elif self.threshold_strategy == "adaptive":
             # 新增：自适应阈值策略
             # 结合多种方法，根据数据分布特征选择最优策略
 
@@ -315,10 +314,10 @@ class SWIFTPipeline(nn.Module):
                     # TODO: 为什么是 75.0?
                     threshold = np.percentile(tail_scores, 75.0)
                 else:
-                    threshold = np.percentile(val_scores, 100 - anomaly_ratio)
+                    threshold = np.percentile(val_scores, 100 - self.anomaly_ratio)
             else:  # 低偏度，使用改进的百分位数方法
                 # 使用更保守的百分位数
-                base_percentile = 100 - anomaly_ratio
+                base_percentile = 100 - self.anomaly_ratio
                 # 根据标准差调整
                 cv = std_score / (mean_score + 1e-8)  # 变异系数
                 # TODO: 为什么是 2.0?
@@ -336,11 +335,7 @@ class SWIFTPipeline(nn.Module):
             return 0.0
         return float(np.mean(((data - mean) / std) ** 3))  # TODO: 为什么是 3?
 
-    def score_anomalies(
-        self,
-        data: np.ndarray,
-        aggregation_method: Literal["mean", "max", "weighted_max"],
-    ) -> np.ndarray:
+    def score_anomalies(self, data: np.ndarray) -> np.ndarray:
         """改进的异常分数计算，支持多种聚合方法"""
         if not self.fitted:
             raise ValueError("Please fit the model first!")
@@ -402,13 +397,13 @@ class SWIFTPipeline(nn.Module):
         counts[counts == 0] = 1
 
         # 均值聚合
-        if aggregation_method == "mean":
+        if self.aggregation_method == "mean":
             final_scores = anomaly_scores_sum / counts
         # 最大值聚合
-        elif aggregation_method == "max":
+        elif self.aggregation_method == "max":
             final_scores = anomaly_scores_max
         # 加权最大值聚合
-        elif aggregation_method == "weighted_max":
+        elif self.aggregation_method == "weighted_max":
             mean_scores = anomaly_scores_sum / counts
             alpha = 0.3  # 均值权重
             beta = 0.7  # 最大值权重
@@ -416,21 +411,13 @@ class SWIFTPipeline(nn.Module):
 
         return final_scores
 
-    def find_anomalies(
-        self,
-        data: np.ndarray,
-        anomaly_ratio: float,
-        threshold_strategy: Literal["percentile", "robust_percentile", "std", "adaptive"],
-        aggregation_method: Literal["mean", "max", "weighted_max"],
-    ) -> tuple[np.ndarray, np.ndarray]:
+    def find_anomalies(self, data: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         if not self.fitted or self.validation_scores is None:
             raise ValueError("Please fit the model first!")
 
         print("正在查找异常点...")
-        test_scores = self.score_anomalies(data, aggregation_method=aggregation_method)
-        threshold = self._calculate_threshold(
-            self.validation_scores, strategy=threshold_strategy, anomaly_ratio=anomaly_ratio
-        )
+        test_scores = self.score_anomalies(data)
+        threshold = self._calculate_threshold(self.validation_scores)
         predictions = (test_scores > threshold).astype(int)
 
         return predictions, test_scores
@@ -442,8 +429,7 @@ def swift_score_anomalies(data: np.ndarray, config: Dict[str, Any]) -> np.ndarra
     """
     pipeline = SWIFTPipeline(config)
     pipeline.fit(data)
-    anomaly_config = config["anomaly_detection"]
-    scores = pipeline.score_anomalies(data, aggregation_method=anomaly_config["aggregation_method"])
+    scores = pipeline.score_anomalies(data)
 
     return scores
 
@@ -453,13 +439,7 @@ def swift_find_anomalies(data: np.ndarray, config: Dict[str, Any]) -> np.ndarray
     找到异常点
     """
     pipeline = SWIFTPipeline(config)
-    anomaly_config = config["anomaly_detection"]
     pipeline.fit(data)
-    predictions, _ = pipeline.find_anomalies(
-        data,
-        anomaly_ratio=anomaly_config["anomaly_ratio"],
-        threshold_strategy=anomaly_config["threshold_strategy"],
-        aggregation_method=anomaly_config["aggregation_method"],
-    )
+    predictions, _ = pipeline.find_anomalies(data)
 
     return predictions
