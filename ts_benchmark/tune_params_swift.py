@@ -205,10 +205,6 @@ def suggest_parameter(
     elif param_type == "float":
         log = param_config.get("log", False)
         value = trial.suggest_float(param_name, param_config["low"], param_config["high"], log=log)
-        # 如果配置了小数位数，则进行四舍五入
-        decimal_places = param_config.get("decimal_places")
-        if decimal_places is not None:
-            value = round(value, decimal_places)
         return value
     else:
         raise ValueError(f"不支持的参数类型: {param_type}")
@@ -359,6 +355,12 @@ def run_optimization(args: argparse.Namespace):
             for param_name, value in trial.params.items():
                 if param_name in PARAM_CONFIG:
                     config_path = PARAM_CONFIG[param_name]["config_path"]
+                    # 应用精度处理
+                    param_config = PARAM_CONFIG[param_name]
+                    if param_config["type"] == "float":
+                        decimal_places = param_config.get("decimal_places")
+                        if decimal_places is not None:
+                            value = round(value, decimal_places)
                     param_updates[config_path] = value
 
             current_best_config = update_config(base_config, param_updates)
