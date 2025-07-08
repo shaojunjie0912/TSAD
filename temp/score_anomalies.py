@@ -66,7 +66,7 @@ if __name__ == "__main__":
     data = df.iloc[:, :-1]
     labels = df.iloc[:, -1].to_numpy()
 
-    scores = swift_score_anomalies(data=data.values, config=swift_config)
+    scores = swift_score_anomalies(all_data=data.values, config=swift_config)
     print(auc_roc(labels, scores))
 
     print("----------------- ✅ -----------------")

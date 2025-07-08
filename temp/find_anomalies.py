@@ -23,7 +23,7 @@ if __name__ == "__main__":
     data = df.iloc[:, :-1]
     labels = df.iloc[:, -1].to_numpy()
 
-    predictions = swift_find_anomalies(data=data.values, config=swift_config)
+    predictions = swift_find_anomalies(all_data=data.values, config=swift_config)
     print(f"Affiliation F1 Score: {affiliation_f(labels, predictions)}")
 
     print("----------------- 🆗 -----------------")

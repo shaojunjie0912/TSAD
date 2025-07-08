@@ -5,8 +5,6 @@
 [anomaly_detection]
 scale_score_lambda = 0.2 # 评分函数中尺度域分数权重
 anomaly_ratio = 3.0      # 异常率 x %
-threshold_strategy = "adaptive"        # 阈值计算策略 ["percentile", "robust_percentile", "std", "adaptive"]
-aggregation_method = "weighted_max"    # 分数聚合方法 ["mean", "max", "weighted_max"]
 
 
 # ----------------------------------------  
@@ -14,6 +12,7 @@ aggregation_method = "weighted_max"    # 分数聚合方法 ["mean", "max", "wei
 # ----------------------------------------
 
 [data]
+tain_val_len = 8640 # 训练集和验证集总长度
 train_ratio = 0.8 # 训练集比例
 # NOTE: (seq_len - patch_size) % patch_stride == 0 确保覆盖 window 中所有数据
 seq_len = 128    # 滑窗大小 (即 window_size) (时域 -> 频域)

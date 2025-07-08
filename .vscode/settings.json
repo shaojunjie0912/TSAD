@@ -1,6 +1,6 @@
 {
     "black-formatter.args": [
-        "--line-length=110"
+        "--line-length=100"
     ],
     "python.analysis.typeCheckingMode": "basic",
     "editor.formatOnSave": false

@@ -15,8 +15,15 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 
+def split_data(all_data: np.ndarray, tain_val_len: int):
+    """训练验证集+测试集"""
+    train_val_data = all_data[:tain_val_len]
+    test_data = all_data[tain_val_len:]
+    return train_val_data, test_data
+
+
 def get_dataloader(
-    stage: str,
+    stage: Literal["train", "val", "test"],
     data: np.ndarray,
     batch_size: int,
     window_size: int,
@@ -26,8 +33,8 @@ def get_dataloader(
     transform: Optional[Any] = None,
     target_transform: Optional[Any] = None,
 ):
-    # predict 阶段需要 padding!!
-    if stage == "predict":
+    # test 阶段需要 padding!!
+    if stage == "test":
         dataset = SlidingWindowDatasetWithPadding(
             data=data,
             window_size=window_size,
@@ -50,7 +57,7 @@ def get_dataloader(
     return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, drop_last=drop_last)
 
 
-# Padding Dataset: 用于预测
+# Padding Dataset: 用于测试
 class SlidingWindowDatasetWithPadding(Dataset):
     def __init__(
         self,
@@ -116,7 +123,7 @@ class SlidingWindowDatasetWithPadding(Dataset):
         return torch.from_numpy(x), torch.from_numpy(y), torch.from_numpy(padding_mask), start_idx
 
 
-# NoPadding Dataset: 用于训练、验证、测试
+# NoPadding Dataset: 用于训练、验证
 class SlidingWindowDatasetNoPadding(Dataset):
     def __init__(
         self,
@@ -154,77 +161,6 @@ class SlidingWindowDatasetNoPadding(Dataset):
             y = self.target_transform(y)
 
         return torch.from_numpy(x), torch.from_numpy(y)
-
-
-class Normalizer:
-    def __init__(self, eps: float = 1e-6):
-        self.mean = None
-        self.std = None
-        self.eps = eps
-
-    def fit(self, data: Union[np.ndarray, torch.Tensor]):
-        """
-        计算并存储每个特征维度的 mean 和 std
-        Args:
-            data (np.ndarray or torch.Tensor): shape (num_samples, num_features)
-        """
-        if isinstance(data, torch.Tensor):
-            data = data.numpy()
-        self.mean = data.mean(axis=0)
-        self.std = data.std(axis=0)
-
-    def transform(self, data: Union[np.ndarray, torch.Tensor]):
-        """
-        标准化数据
-        """
-        if self.mean is None or self.std is None:
-            raise RuntimeError("You must call fit() before transform().")
-
-        if isinstance(data, torch.Tensor):
-            mean = torch.tensor(self.mean, dtype=data.dtype, device=data.device)
-            std = torch.tensor(self.std, dtype=data.dtype, device=data.device)
-            return (data - mean) / (std + self.eps)
-        else:
-            return (data - self.mean) / (self.std + self.eps)
-
-    def inverse_transform(self, data: Union[np.ndarray, torch.Tensor]):
-        """
-        将标准化后的数据还原为原始值
-        """
-        if self.mean is None or self.std is None:
-            raise RuntimeError("You must call fit() before inverse_transform().")
-
-        if isinstance(data, torch.Tensor):
-            mean = torch.tensor(self.mean, dtype=data.dtype, device=data.device)
-            std = torch.tensor(self.std, dtype=data.dtype, device=data.device)
-            return data * (std + self.eps) + mean
-        else:
-            return data * (self.std + self.eps) + self.mean
-
-    def as_transform(self):
-        """
-        返回可用于 PyTorch Dataset 的 transform 函数
-        """
-        return lambda x: self.transform(x)
-
-    def save(self, path):
-        """
-        保存 mean 和 std 到 JSON 文件
-        """
-        if self.mean is None or self.std is None:
-            raise RuntimeError("You must call fit() before save().")
-        stats = {"mean": self.mean.tolist(), "std": self.std.tolist()}
-        with open(path, "w") as f:
-            json.dump(stats, f)
-
-    def load(self, path):
-        """
-        从 JSON 文件加载 mean 和 std
-        """
-        with open(path, "r") as f:
-            stats = json.load(f)
-        self.mean = np.array(stats["mean"], dtype=np.float32)
-        self.std = np.array(stats["std"], dtype=np.float32)
 
 
 class EarlyStopping:
@@ -303,7 +239,9 @@ class EarlyStopping:
         if self.ckpt_path:
             torch.save(model.state_dict(), self.ckpt_path)
         else:
-            state_dict = model.module.state_dict() if hasattr(model, "module") else model.state_dict()
+            state_dict = (
+                model.module.state_dict() if hasattr(model, "module") else model.state_dict()
+            )
             self._best_state_dict = copy.deepcopy(state_dict)
 
         if self.verbose:
