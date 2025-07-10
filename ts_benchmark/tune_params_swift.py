@@ -15,6 +15,8 @@ from evaluation.metrics.anomaly_detection_metrics_label import affiliation_f
 from evaluation.metrics.anomaly_detection_metrics_score import auc_roc
 from tools.tools import set_seed
 
+# TODO: 遇到 cuda out of memory, 那么此时的参数组合是否需要重试?
+
 
 def clear_gpu_memory():
     """清理GPU内存"""
@@ -64,8 +66,8 @@ PARAM_CONFIG = {
     },
     "cfm_num_layers": {
         "type": "int",
-        "low": 3,
-        "high": 5,
+        "low": 2,
+        "high": 8,
         "config_path": "model.CFM.num_layers",
     },
     "cfm_dropout": {
@@ -135,8 +137,8 @@ PARAM_CONFIG = {
     # 训练参数
     "learning_rate": {
         "type": "float",
-        "low": 1e-4,
-        "high": 5e-3,
+        "low": 5e-5,
+        "high": 1e-2,
         "log": True,
         "config_path": "training.learning_rate",
         "decimal_places": 5,

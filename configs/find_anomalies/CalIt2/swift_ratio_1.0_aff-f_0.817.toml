@@ -1,51 +1,51 @@
 [anomaly_detection]
-scale_score_lambda = 0.739
+scale_score_lambda = 0.914
 anomaly_ratio = 1.0
 
 [data]
 tain_val_len = 2520
 train_ratio = 0.8
-seq_len = 64
-patch_size = 8
-patch_stride = 8
+seq_len = 128
+patch_size = 16
+patch_stride = 4
 
 [model.FM]
 affine = false
 subtract_last = false
-level = 4
-wavelet = "sym4"
+level = 3
+wavelet = "db4"
 mode = "symmetric"
 
 [model.CFM]
-num_layers = 5
-d_cf = 96
-d_model = 96
+num_layers = 2
+d_cf = 64
+d_model = 128
 num_heads = 4
 d_head = 64
 d_ff = 128
-dropout = 0.172
-attention_dropout = 0.174
-num_gat_heads = 4
-gat_head_dim = 8
+dropout = 0.193
+attention_dropout = 0.137
+num_gat_heads = 2
+gat_head_dim = 16
 gat_dropout_rate = 0.1
 
 [model.TSRM]
-is_flatten_individual = false
+is_flatten_individual = true
 rec_head_dropout = 0.1
 
 [training]
 batch_size = 32
-num_epochs = 1
-learning_rate = 0.0005
+num_epochs = 30
+learning_rate = 0.00787
 pct_start = 0.3
 es_patience = 10
 es_delta = 0.001
 
 [loss]
 ccd_align_temperature = 0.1
-ccd_regular_lambda = 0.356
-ccd_align_lambda = 1.6
-scale_loss_lambda = 0.331
-ccd_loss_lambda = 0.00044
+ccd_regular_lambda = 0.072
+ccd_align_lambda = 1.943
+scale_loss_lambda = 0.468
+ccd_loss_lambda = 0.00059
 time_loss_delta = 1.0
 scale_loss_delta = 1.0
