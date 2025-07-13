@@ -50,6 +50,7 @@ class SWIFTPipeline(nn.Module):
 
     # train + val
     def fit(self, train_val_data: np.ndarray):
+        print(f"训练+验证集长度: {train_val_data.shape[0]}")
         trial_number = self.config.get("trial_number", None)
         logger = logging.getLogger(f"Trial-{trial_number}")
         logger.setLevel(logging.INFO)

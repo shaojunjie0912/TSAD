@@ -25,6 +25,19 @@ def clear_gpu_memory():
         gc.collect()
 
 
+def create_study_name(args: argparse.Namespace) -> str:
+    """创建study名称"""
+    return f"{args.task_name}_{args.dataset_name}_{args.algorithm_name}_ratio_{args.anomaly_ratio}"
+
+
+def create_study_db_path(args: argparse.Namespace) -> str:
+    """创建study数据库路径"""
+    study_name = create_study_name(args)
+    db_dir = "optuna_studies"
+    os.makedirs(db_dir, exist_ok=True)
+    return os.path.join(db_dir, f"{study_name}.db")
+
+
 # ========== 统一参数配置 ==========
 PARAM_CONFIG = {
     "seq_len": {
@@ -316,6 +329,8 @@ def run_optimization(args: argparse.Namespace):
 
         df = pd.read_csv(args.dataset_path)
         all_data = df.iloc[:, :-1].values  # 训练验证测试集
+        # 打印数据集的形状
+        print(f"数据集变量数: {all_data.shape[1]}")
         test_labels = df.iloc[args.train_val_len :, -1].to_numpy()  # 测试集标签
 
     except Exception as e:
@@ -323,16 +338,75 @@ def run_optimization(args: argparse.Namespace):
         return
 
     # ---------- 创建 Optuna Study ----------
-    study = optuna.create_study(
-        direction="maximize",
-        sampler=optuna.samplers.TPESampler(),
-        pruner=optuna.pruners.MedianPruner(),
-    )
+    study_db_path = create_study_db_path(args)
+    study_name = create_study_name(args)
+    print(f"💾 Study DB 路径: {study_db_path}")
+
+    # 检查是否强制重启
+    if args.restart and os.path.exists(study_db_path):
+        print("🔄 强制重新开始调优，删除现有数据库...")
+        try:
+            os.remove(study_db_path)
+            print(f"🗑️ 删除文件: {study_db_path}")
+        except Exception as e:
+            print(f"❌ 删除文件失败: {e}")
+        study = optuna.create_study(
+            direction="maximize",
+            sampler=optuna.samplers.TPESampler(),
+            pruner=optuna.pruners.MedianPruner(),
+            storage=f"sqlite:///{study_db_path}",
+            study_name=study_name,
+            load_if_exists=False,  # 强制不加载已存在的试验
+        )
+    else:
+        study = optuna.create_study(
+            direction="maximize",
+            sampler=optuna.samplers.TPESampler(),
+            pruner=optuna.pruners.MedianPruner(),
+            storage=f"sqlite:///{study_db_path}",
+            study_name=study_name,
+            load_if_exists=True,
+        )
+
+    # 显示已完成的试验信息
+    completed_trials = len([t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE])
+    if completed_trials > 0:
+        print(f"📊 从数据库恢复了 {completed_trials} 个已完成的试验")
+        try:
+            best_trial = study.best_trial
+            if best_trial:
+                print(f"🏆 当前最佳分数: {best_trial.value:.3f} (Trial {best_trial.number})")
+        except ValueError:
+            # 当没有完成的试验时，best_trial 会抛出异常
+            print("⚠️ 尚未有完成的试验")
+    else:
+        print("🆕 开始新的调优会话")
+
+    # 计算剩余试验数
+    remaining_trials = max(0, args.n_trials - len(study.trials))
+    if remaining_trials == 0:
+        print("✅ 所有试验已完成!")
+        try:
+            if study.best_trial:
+                print(f"🏆 最佳分数: {study.best_trial.value:.3f}")
+        except ValueError:
+            print("⚠️ 没有完成的试验")
+        return
+    elif remaining_trials < args.n_trials:
+        print(f"🔄 将继续执行剩余的 {remaining_trials} 个试验")
 
     # ---------- 回调用于追踪最佳结果 ----------
+    # 从数据库获取当前最佳值，安全地处理没有试验的情况
     best_value: float = -1.0
     best_params: Dict[str, Any] = {}
     best_config_path: str = ""  # 记录当前最佳配置文件路径
+    try:
+        if study.best_trial:
+            best_value = study.best_value
+            best_params = study.best_params
+    except ValueError:
+        # 没有完成的试验时会抛出异常
+        pass
 
     def _callback(study: optuna.Study, trial: optuna.trial.FrozenTrial):
         nonlocal best_value, best_params, best_config_path
@@ -379,20 +453,32 @@ def run_optimization(args: argparse.Namespace):
     try:
         study.optimize(
             lambda t: objective(t, base_config, all_data, test_labels, args.task_name),
-            n_trials=args.n_trials,
+            n_trials=remaining_trials,
             callbacks=[_callback],
         )
     except KeyboardInterrupt:
         print("⏹️ 优化被用户中断")
+        print(f"💾 进度已保存到数据库: {study_db_path}")
     except Exception as e:
         print(f"❌ 优化过程出错: {e}")
+        print(f"💾 进度已保存到数据库: {study_db_path}")
 
     # ---------- 最终结果总结 ----------
-    if best_params:
-        print("\n✅ 调优完成!")
-        print(f"📊 最佳 {metric_name} 分数: {best_value:.3f}")
-    else:
+    try:
+        final_best_trial = study.best_trial
+        if final_best_trial:
+            print("\n✅ 调优完成!")
+            print(f"📊 最佳 {metric_name} 分数: {final_best_trial.value:.3f}")
+            print(f"📈 总共完成了 {len(study.trials)} 个试验")
+            print(f"💾 调优进度已保存到: {study_db_path}")
+        else:
+            print("\n⚠️ 没有找到有效的最佳参数，请检查数据和配置")
+    except ValueError:
+        # 没有完成的试验时会抛出异常
         print("\n⚠️ 没有找到有效的最佳参数，请检查数据和配置")
+        if len(study.trials) > 0:
+            print(f"📈 总共尝试了 {len(study.trials)} 个试验")
+            print(f"💾 调优进度已保存到: {study_db_path}")
 
 
 # --------------------------- CLI ---------------------------
@@ -406,6 +492,11 @@ if __name__ == "__main__":
     cli_parser.add_argument("--algorithm-name", type=str, required=True, help="算法名称")
     cli_parser.add_argument("--anomaly-ratio", type=float, required=True, help="异常率 (百分比)")
     cli_parser.add_argument("--n-trials", type=int, required=True, help="Optuna 试验次数")
+
+    # 调优控制参数
+    cli_parser.add_argument(
+        "--restart", action="store_true", help="强制重新开始调优（忽略已保存的进度）"
+    )
 
     # 路径参数
     cli_parser.add_argument(
