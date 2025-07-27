@@ -33,6 +33,7 @@ class SWIFTPipeline(nn.Module):
         self.anomaly_config = config["anomaly_detection"]
         self.scale_score_lambda = self.anomaly_config["scale_score_lambda"]
         self.anomaly_ratio: float = self.anomaly_config["anomaly_ratio"]
+        self.score_aggregation_alpha: float = self.anomaly_config["score_aggregation_alpha"]
 
         self.batch_size: int = self.training_config["batch_size"]
         self.seq_len: int = self.data_config["seq_len"]
@@ -148,7 +149,9 @@ class SWIFTPipeline(nn.Module):
 
         # 优化器
         self.optimizer = torch.optim.Adam(
-            self.model.parameters(), lr=self.training_config["learning_rate"]
+            self.model.parameters(),
+            lr=self.training_config["learning_rate"],
+            weight_decay=self.training_config["weight_decay"],
         )
         # 学习率调度器
         self.scheduler = lr_scheduler.OneCycleLR(
@@ -374,8 +377,8 @@ class SWIFTPipeline(nn.Module):
 
         # 均值聚合 + 最大值聚合
         mean_scores = anomaly_scores_sum / counts
-        alpha = 0.3  # 均值权重
-        beta = 0.7  # 最大值权重
+        alpha = self.score_aggregation_alpha  # 均值权重
+        beta = 1.0 - alpha  # 最大值权重
         final_scores = alpha * mean_scores + beta * anomaly_scores_max
 
         return final_scores

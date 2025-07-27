@@ -6,7 +6,9 @@ from typing import Any, Dict, List, Union
 
 import numpy as np
 import optuna
+import optuna.visualization as vis
 import pandas as pd
+import plotly.graph_objects as go
 import tomli
 import tomli_w
 import torch
@@ -38,6 +40,171 @@ def create_study_db_path(args: argparse.Namespace) -> str:
     return os.path.join(db_dir, f"{study_name}.db")
 
 
+def generate_optimization_plots(study: optuna.Study, args: argparse.Namespace) -> None:
+    """生成优化过程的可视化图表"""
+    if len(study.trials) == 0:
+        print("⚠️ 没有试验数据，跳过可视化图表生成")
+        return
+
+    # 创建可视化输出目录
+    viz_dir = f"optuna_visualizations/{args.dataset_name}/{args.algorithm_name}"
+    os.makedirs(viz_dir, exist_ok=True)
+
+    # 根据任务类型确定指标名称
+    metric_name = "Affiliation-F" if args.task_name == "find_anomalies" else "AUC-ROC"
+
+    try:
+        # 1. 优化历史图 - 显示每次试验的结果和最佳值趋势
+        print("📊 生成优化历史图...")
+        fig_history = vis.plot_optimization_history(study)
+        fig_history.update_layout(
+            title=f"优化历史 - {args.dataset_name} ({metric_name})",
+            xaxis_title="试验次数",
+            yaxis_title=f"{metric_name} 分数",
+        )
+        fig_history.write_html(f"{viz_dir}/optimization_history.html")
+
+        # 2. 参数重要性图 - 显示哪些参数对结果影响最大
+        print("📊 生成参数重要性图...")
+        fig_importance = vis.plot_param_importances(study)
+        fig_importance.update_layout(
+            title=f"参数重要性 - {args.dataset_name}", xaxis_title="重要性"
+        )
+        fig_importance.write_html(f"{viz_dir}/param_importances.html")
+
+        # 3. 参数关系图 - 显示参数之间的相关性
+        print("📊 生成参数关系图...")
+        fig_slice = vis.plot_slice(study)
+        fig_slice.update_layout(title=f"参数切片分析 - {args.dataset_name}")
+        fig_slice.write_html(f"{viz_dir}/param_slice.html")
+
+        # 4. 并行坐标图 - 显示高性能试验的参数组合
+        print("📊 生成并行坐标图...")
+        fig_parallel = vis.plot_parallel_coordinate(study)
+        fig_parallel.update_layout(title=f"并行坐标图 - {args.dataset_name}")
+        fig_parallel.write_html(f"{viz_dir}/parallel_coordinate.html")
+
+        # 5. 收敛分析 - 自定义图表分析收敛情况
+        print("📊 生成收敛分析图...")
+        completed_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+        if len(completed_trials) > 1:
+            trial_numbers = [t.number for t in completed_trials]
+            trial_values = [t.value for t in completed_trials]
+
+            # 计算运行最佳值
+            best_values = []
+            current_best = float("-inf")
+            for value in trial_values:
+                if value is not None and value > current_best:
+                    current_best = value
+                best_values.append(current_best)
+
+            # 创建收敛图
+            fig_convergence = go.Figure()
+            fig_convergence.add_trace(
+                go.Scatter(
+                    x=trial_numbers,
+                    y=trial_values,
+                    mode="markers",
+                    name="试验结果",
+                    marker=dict(color="lightblue", size=8),
+                )
+            )
+            fig_convergence.add_trace(
+                go.Scatter(
+                    x=trial_numbers,
+                    y=best_values,
+                    mode="lines+markers",
+                    name="最佳值趋势",
+                    line=dict(color="red", width=2),
+                )
+            )
+            fig_convergence.update_layout(
+                title=f"收敛分析 - {args.dataset_name}",
+                xaxis_title="试验次数",
+                yaxis_title=f"{metric_name} 分数",
+                hovermode="x unified",
+            )
+            fig_convergence.write_html(f"{viz_dir}/convergence_analysis.html")
+
+        print(f"📊 可视化图表已保存到: {viz_dir}")
+        print(f"📊 可在浏览器中打开 HTML 文件查看交互式图表")
+
+    except Exception as e:
+        print(f"❌ 生成可视化图表时出错: {e}")
+
+
+def analyze_convergence(study: optuna.Study, window_size: int = 20) -> Dict[str, Any]:
+    """分析优化收敛情况"""
+    completed_trials = [
+        t
+        for t in study.trials
+        if t.state == optuna.trial.TrialState.COMPLETE and t.value is not None
+    ]
+
+    if len(completed_trials) < window_size:
+        return {
+            "is_converged": False,
+            "reason": f"试验数量不足 ({len(completed_trials)} < {window_size})",
+            "improvement_rate": 0.0,
+        }
+
+    # 计算最近window_size个试验的改进情况
+    recent_trials = completed_trials[-window_size:]
+    recent_values = [t.value for t in recent_trials if t.value is not None]
+
+    if not recent_values:
+        return {
+            "is_converged": False,
+            "reason": "没有有效的试验值",
+            "improvement_rate": 0.0,
+        }
+
+    # 计算改进率
+    best_in_window = max(recent_values)
+    all_values = [t.value for t in completed_trials if t.value is not None]
+    best_overall = max(all_values) if all_values else 0.0
+    improvement_rate = (
+        (best_in_window - best_overall) / abs(best_overall) if best_overall != 0 else 0
+    )
+
+    # 判断是否收敛
+    is_converged = abs(improvement_rate) < 0.001  # 改进率小于0.1%认为收敛
+
+    return {
+        "is_converged": is_converged,
+        "improvement_rate": improvement_rate,
+        "recent_best": best_in_window,
+        "overall_best": best_overall,
+        "trials_analyzed": len(completed_trials),
+    }
+
+
+def get_n_trials_recommendation(dataset_name: str, algorithm_name: str) -> int:
+    """根据数据集和算法推荐试验次数"""
+    # 基础试验次数
+    base_trials = 50
+
+    # 根据数据集大小调整
+    dataset_multipliers = {
+        "PSM": 2.0,  # 大数据集
+        "MSL": 1.5,  # 中等数据集
+        "CalIt2": 1.0,  # 小数据集
+    }
+
+    # 根据算法复杂度调整
+    algorithm_multipliers = {
+        "swift": 1.5,  # 复杂算法，需要更多试验
+    }
+
+    multiplier = dataset_multipliers.get(dataset_name, 1.0) * algorithm_multipliers.get(
+        algorithm_name, 1.0
+    )
+    recommended_trials = int(base_trials * multiplier)
+
+    return recommended_trials
+
+
 # ========== 统一参数配置 ==========
 PARAM_CONFIG = {
     "seq_len": {
@@ -62,7 +229,7 @@ PARAM_CONFIG = {
     },
     "d_model": {
         "type": "categorical",
-        "choices": [64, 96, 128],
+        "choices": [64, 96, 128, 256],
         "config_path": "model.CFM.d_model",
     },
     "cfm_num_heads": {
@@ -73,7 +240,7 @@ PARAM_CONFIG = {
     "cfm_attention_dropout": {
         "type": "float",
         "low": 0.1,
-        "high": 0.2,
+        "high": 0.4,
         "config_path": "model.CFM.attention_dropout",
         "decimal_places": 3,
     },
@@ -86,7 +253,7 @@ PARAM_CONFIG = {
     "cfm_dropout": {
         "type": "float",
         "low": 0.1,
-        "high": 0.2,
+        "high": 0.4,
         "config_path": "model.CFM.dropout",
         "decimal_places": 3,
     },
@@ -156,12 +323,27 @@ PARAM_CONFIG = {
         "config_path": "training.learning_rate",
         "decimal_places": 5,
     },
+    "weight_decay": {
+        "type": "float",
+        "low": 0.0,
+        "high": 5e-2,
+        "log": False,
+        "config_path": "training.weight_decay",
+        "decimal_places": 5,
+    },
     # 异常检测参数
     "scale_score_lambda": {
         "type": "float",
         "low": 0.1,
         "high": 1.0,
         "config_path": "anomaly_detection.scale_score_lambda",
+        "decimal_places": 3,
+    },
+    "score_aggregation_alpha": {
+        "type": "float",
+        "low": 0.1,
+        "high": 0.9,
+        "config_path": "anomaly_detection.score_aggregation_alpha",
         "decimal_places": 3,
     },
 }
@@ -463,6 +645,29 @@ def run_optimization(args: argparse.Namespace):
         print(f"❌ 优化过程出错: {e}")
         print(f"💾 进度已保存到数据库: {study_db_path}")
 
+    # ---------- 生成可视化图表 ----------
+    if args.enable_visualization:
+        print("\n📊 生成可视化图表...")
+        generate_optimization_plots(study, args)
+    else:
+        print("\n📊 跳过可视化图表生成（使用 --enable-visualization 启用）")
+
+    # ---------- 收敛分析 ----------
+    convergence_info = analyze_convergence(study)
+    print(f"\n🔍 收敛分析:")
+    print(f"  - 是否收敛: {'是' if convergence_info['is_converged'] else '否'}")
+    if not convergence_info["is_converged"]:
+        print(f"  - 原因: {convergence_info.get('reason', '改进率过高')}")
+    print(f"  - 改进率: {convergence_info['improvement_rate']:.4f}")
+    print(f"  - 分析试验数: {convergence_info['trials_analyzed']}")
+
+    # ---------- 试验次数建议 ----------
+    recommended_trials = get_n_trials_recommendation(args.dataset_name, args.algorithm_name)
+    current_trials = len(study.trials)
+    if current_trials < recommended_trials:
+        print(f"\n💡 建议: 当前试验数 ({current_trials}) 少于推荐数 ({recommended_trials})")
+        print(f"   考虑增加试验次数以获得更好的结果")
+
     # ---------- 最终结果总结 ----------
     try:
         final_best_trial = study.best_trial
@@ -496,6 +701,9 @@ if __name__ == "__main__":
     # 调优控制参数
     cli_parser.add_argument(
         "--restart", action="store_true", help="强制重新开始调优（忽略已保存的进度）"
+    )
+    cli_parser.add_argument(
+        "--enable-visualization", action="store_true", help="启用可视化图表生成（需要安装plotly）"
     )
 
     # 路径参数

@@ -9,6 +9,7 @@ dependencies = [
     "matplotlib>=3.10.3",
     "optuna>=4.4.0",
     "pandas>=2.2.3",
+    "plotly>=6.2.0",
     "ptwt>=0.1.9",
     "scikit-learn>=1.7.0",
     "scipy>=1.15.3",

@@ -5,6 +5,7 @@
 [anomaly_detection]
 scale_score_lambda = 0.2 # 评分函数中尺度域分数权重
 anomaly_ratio = 3.0      # 异常率 x %
+score_aggregation_alpha = 0.3  # 异常分数聚合中均值权重(beta = 1 - alpha为最大值权重)
 
 
 # ----------------------------------------  
@@ -66,8 +67,9 @@ rec_head_dropout = 0.1        # 解码器头部 dropout 率
 
 [training]
 batch_size = 32       # 批量大小
-num_epochs = 2       # 训练轮次
+num_epochs = 30       # 训练轮次
 learning_rate = 0.001 # 学习率
+weight_decay = 0.0    # Adam优化器权重衰减(L2正则化)
 pct_start = 0.3       # 学习率预热比例
 es_patience = 10      # 早停策略的耐心值
 es_delta = 0.001      # 最小变化量

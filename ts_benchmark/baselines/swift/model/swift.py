@@ -1,6 +1,7 @@
 """
 SWIFT-AD (Stationary Wavelet-patched Inter-channel Fusion Transformer for Anomaly Detection)
 Multiresolution Wavelet Patching and Graph-Guided Channel Fusion for Robust Multivariate Time-Series Anomaly Detection
+基于多尺度小波变换和图引导通道融合的鲁棒多变量时间序列异常检测
 """
 
 from typing import Literal, Optional, Tuple
@@ -118,7 +119,9 @@ class RevIN(nn.Module):
         if self.affine:
             self._init_params()
 
-    def forward(self, x: torch.Tensor, mode: Literal["norm", "denorm", "transform"]) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, mode: Literal["norm", "denorm", "transform"]
+    ) -> torch.Tensor:
         """
 
         Args:
@@ -357,6 +360,8 @@ class SWIFT(nn.Module):
             x_original,  # x: 时间域原始值 (B, T, C)
             x_hat,  # x_hat: 时间域重构值 (B, T, C)
             original_coeffs.permute(0, 2, 1),  # original_coeffs: 尺度域原始值 (B, T, Extd_C)
-            reconstructed_coeffs.permute(0, 2, 1),  # reconstructed_coeffs: 尺度域重构值 (B, T, Extd_C)
+            reconstructed_coeffs.permute(
+                0, 2, 1
+            ),  # reconstructed_coeffs: 尺度域重构值 (B, T, Extd_C)
             ccd_loss,  # ccd_loss: 通道相关性发掘损失
         )
