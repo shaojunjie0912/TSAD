@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "einops>=0.8.1",
+    "joblib>=1.5.1",
     "matplotlib>=3.10.3",
     "optuna>=4.4.0",
     "pandas>=2.2.3",
