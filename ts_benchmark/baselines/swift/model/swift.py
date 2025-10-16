@@ -343,7 +343,7 @@ class SWIFT(nn.Module):
 
         # -> (B, Extd_C, patch_num, d_model)
         z_hat = z_hat.reshape(B, self.patch_num, self.extended_num_features, self.d_model)
-        z_hat = z_hat.permute(0, 2, 1, 3)
+        z_hat = z_hat.permute(0, 2, 1, 3).contiguous()
 
         # (B, Extd_C, T)
         reconstructed_coeffs = self.reconstruction_head(z_hat)

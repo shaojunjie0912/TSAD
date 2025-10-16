@@ -1,0 +1,53 @@
+[anomaly_detection]
+scale_score_lambda = 0.104
+anomaly_ratio = 5.0
+score_aggregation_alpha = 0.262
+
+[data]
+tain_val_len = 58317
+train_ratio = 0.8
+seq_len = 64
+patch_size = 32
+patch_stride = 4
+
+[model.FM]
+affine = false
+subtract_last = false
+level = 4
+wavelet = "db4"
+mode = "symmetric"
+
+[model.CFM]
+num_layers = 5
+d_cf = 32
+d_model = 64
+num_heads = 2
+d_head = 64
+d_ff = 128
+dropout = 0.183
+attention_dropout = 0.102
+num_gat_heads = 2
+gat_head_dim = 16
+gat_dropout_rate = 0.1
+
+[model.TSRM]
+is_flatten_individual = true
+rec_head_dropout = 0.1
+
+[training]
+batch_size = 32
+num_epochs = 30
+learning_rate = 0.00084
+weight_decay = 0.01549
+pct_start = 0.3
+es_patience = 10
+es_delta = 0.001
+
+[loss]
+ccd_align_temperature = 0.1
+ccd_regular_lambda = 0.109
+ccd_align_lambda = 0.525
+scale_loss_lambda = 0.338
+ccd_loss_lambda = 0.00207
+time_loss_delta = 1.0
+scale_loss_delta = 1.0

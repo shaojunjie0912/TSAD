@@ -6,4 +6,4 @@
     --train-val-len 58317 \
     --algorithm-name swift \
     --anomaly-ratio 5.0 \
-    --n-trials 50
+    --n-trials 100

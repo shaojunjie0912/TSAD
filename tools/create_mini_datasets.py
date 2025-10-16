@@ -49,9 +49,9 @@ def pre_analyze_dataset(data_df: pd.DataFrame, labels: pd.Series) -> dict:
     anomaly_points = int(labels.sum())
     anomaly_ratio = anomaly_points / total_points if total_points > 0 else 0.0
     anomaly_events = get_anomaly_events(labels)
-    # 打印所有异常事件的长度
-    for start, end in anomaly_events:
-        print(f"异常事件长度: {end - start}")
+    # 打印所有异常事件的长度 (用一个列表表示)
+    anomaly_event_lengths = [end - start for start, end in anomaly_events]
+    print(f"异常事件长度: {anomaly_event_lengths}")
 
     return {
         "total_points": total_points,
@@ -114,6 +114,24 @@ def score_candidate_segment(
     return score, score_details
 
 
+# 将单次循环的任务封装成一个“工作函数”
+def process_segment(
+    start_idx: int,
+    L_sub: int,
+    full_df: pd.DataFrame,
+    data_df: pd.DataFrame,
+    full_stats: dict,
+    weights: dict,
+) -> dict:
+    """
+    处理单个候选子集的函数，用于并行化。
+    """
+    end_idx = start_idx + L_sub
+    candidate_df_combined = full_df.iloc[start_idx:end_idx]
+    score, details = score_candidate_segment(candidate_df_combined, data_df, full_stats, weights)
+    return {"start_idx": start_idx, "end_idx": end_idx, "score": score, "details": details}
+
+
 def create_mini_benchmark(
     input_path: Path,
     output_path: Path,
@@ -126,7 +144,11 @@ def create_mini_benchmark(
     """主函数，执行构建迷你基准的完整流程。"""
     if weights is None:
         weights = {"stat": 0.5, "ar": 0.4, "cov": 0.1}
+
     full_df = pd.read_csv(input_path)
+    L_full = len(full_df)
+    L_sub = subset_length
+
     if "label" not in full_df.columns:
         raise ValueError("输入CSV文件中未找到 'label' 列。")
 
@@ -136,35 +158,31 @@ def create_mini_benchmark(
     print("--- 预分析完整数据集 ---")
     full_stats = pre_analyze_dataset(data_df, labels)
     print(
-        f"完整数据集分析完毕: 总长度: {full_stats['total_points']}, 异常事件个数: {full_stats['num_anomaly_events']}, 异常率: {full_stats['anomaly_ratio']:.2%}。"
+        f"完整数据集分析完毕: 总长度: {L_full}, 异常事件个数: {full_stats['num_anomaly_events']}, 异常率: {full_stats['anomaly_ratio']:.2%}。"
     )
 
-    print("--- 生成并评估候选子集 ---")
-    L_full = len(full_df)
-    L_sub = subset_length
+    print("--- 生成并评估候选子集 (并行模式) ---")
     stride = max(1, stride_length)
     print(f"子集大小: {L_sub}, 步长: {stride}")
 
-    best_score = float("inf")
-    best_segment_info = {}
+    all_start_indices = range(0, L_full - L_sub + 1, stride)
 
-    # 遍历所有可能的起始点
-    for start_idx in tqdm(range(0, L_full - L_sub + 1, stride), desc="评估候选子集"):
-        end_idx = start_idx + L_sub
-        # 直接对合并的DataFrame进行切片，传入评分函数
-        candidate_df_combined = full_df.iloc[start_idx:end_idx]
+    results = Parallel(n_jobs=-1, verbose=10)(
+        delayed(process_segment)(start_idx, L_sub, full_df, data_df, full_stats, weights)
+        for start_idx in all_start_indices
+    )
 
-        score, details = score_candidate_segment(
-            candidate_df_combined, data_df, full_stats, weights
-        )
+    # --- 从并行结果中找到最优解 ---
+    # 过滤掉可能的 None 值
+    valid_results = [r for r in results if r is not None]
 
-        if score < best_score:
-            best_score = score
-            best_segment_info = {
-                "start_idx": start_idx,
-                "end_idx": end_idx,
-                "score_details": details,
-            }
+    best_result = min(valid_results, key=lambda x: x["score"])
+
+    best_segment_info = {
+        "start_idx": best_result["start_idx"],
+        "end_idx": best_result["end_idx"],
+        "score_details": best_result["details"],
+    }
 
     print("\n--- 最终确定与保存 ---")
     if not best_segment_info:
@@ -173,43 +191,33 @@ def create_mini_benchmark(
     start, end = best_segment_info["start_idx"], best_segment_info["end_idx"]
     print(f"找到最佳子集: 索引从 {start} 到 {end}。")
 
-    # 切割出最佳子集 (这是一个包含特征和标签的DataFrame)
     mini_df = full_df.iloc[start:end].copy()
 
-    original_train_ratio = train_test_split_idx / L_full
-
-    # 确定新的训练/测试分割点
+    MIN_TEST_RATIO = 0.3
     if start <= train_test_split_idx < end:
+        # 优先策略：使用原始分割点的映射
         new_split_idx = train_test_split_idx - start
-        curr_train_ratio = new_split_idx / len(mini_df)
-        if curr_train_ratio > original_train_ratio:
-            new_split_idx = int(len(mini_df) * original_train_ratio)
+        curr_test_ratio = (len(mini_df) - new_split_idx) / len(mini_df)
+        if curr_test_ratio < MIN_TEST_RATIO:
+            new_split_idx = int(len(mini_df) * (1 - MIN_TEST_RATIO))
     else:
-        new_split_idx = int(len(mini_df) * original_train_ratio)
+        new_split_idx = int(len(mini_df) * (1 - MIN_TEST_RATIO))
 
     train_df = mini_df.iloc[:new_split_idx]
     test_df = mini_df.iloc[new_split_idx:]
-
     print(f"新训练集大小: {len(train_df)}, 新测试集大小: {len(test_df)}")
 
-    # 保存文件，保持原始格式
     output_path_train = output_path / "train"
     output_path_test = output_path / "test"
     output_path_train.mkdir(exist_ok=True, parents=True)
     output_path_test.mkdir(exist_ok=True, parents=True)
-
-    # 使用 index=False 避免在CSV中写入新的索引列
     train_df.to_csv(output_path_train / f"{output_prefix}.csv", index=False)
     test_df.to_csv(output_path_test / f"{output_prefix}.csv", index=False)
-
     print(f"文件已保存至: {output_path.resolve()}")
 
-    # 保存元数据
-    # 为了生成元数据，需要对最终的mini_df再做一次分析
     mini_labels = mini_df["label"]
     mini_data = mini_df.drop(columns=["label"])
     mini_stats = pre_analyze_dataset(mini_data, mini_labels)
-
     metadata = {
         "source_dataset": input_path.name,
         "subset_length": subset_length,
@@ -226,7 +234,6 @@ def create_mini_benchmark(
     output_path_metadata.mkdir(exist_ok=True, parents=True)
     with open(output_path_metadata / f"{output_prefix}_metadata.json", "w") as f:
         json.dump(metadata, f, indent=4)
-
     print(f"元数据已保存至: {output_path.resolve()}/{output_prefix}_metadata.json")
 
 

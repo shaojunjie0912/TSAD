@@ -2,8 +2,8 @@
 
 .venv/bin/python ts_benchmark/tune_params_swift.py \
     --task-name score_anomalies \
-    --dataset-name CalIt2 \
-    --train-val-len 2520 \
+    --dataset-name NYC \
+    --train-val-len 13104 \
     --algorithm-name swift \
-    --anomaly-ratio 1.0 \
-    --n-trials 100
+    --anomaly-ratio 5.0 \
+    --n-trials 500

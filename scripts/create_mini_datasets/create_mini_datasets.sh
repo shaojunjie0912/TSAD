@@ -1,13 +1,28 @@
 #! /bin/bash
 
+LOG_DIR="logs/mini_datasets"
+
+echo "开始并行处理数据集，日志将保存在 $LOG_DIR 目录中..."
+
 .venv/bin/python tools/create_mini_datasets.py \
     --input_path datasets/large/SWAT.csv \
     --output_path datasets/mini \
     --output_prefix SWAT \
     --split_idx 495000 \
-    --subset_length 10000 \
-    --stride_length 100
+    --subset_length 15000 \
+    --stride_length 30 > "${LOG_DIR}/SWAT.log" 2>&1 &
 
+.venv/bin/python tools/create_mini_datasets.py \
+    --input_path datasets/large/SMAP.csv \
+    --output_path datasets/mini \
+    --output_prefix SMAP \
+    --split_idx 135183 \
+    --subset_length 15000 \
+    --stride_length 30 > "${LOG_DIR}/SMAP.log" 2>&1 &
+
+wait
+
+echo "所有数据集处理完成。"
 
 # CalIt2.csv	2520
 # CICIDS.csv	85115

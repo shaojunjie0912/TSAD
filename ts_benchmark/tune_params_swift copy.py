@@ -23,9 +23,21 @@ from tools.tools import set_seed
 
 def clear_gpu_memory():
     """清理GPU内存"""
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()  # 清理IPC内存
         gc.collect()
+    except RuntimeError as e:
+        if "CUDA error" in str(e):
+            print(f"⚠️ GPU内存清理失败，可能需要重启程序: {e}")
+            # 重置CUDA上下文
+            try:
+                torch.cuda.reset_peak_memory_stats()
+            except:
+                pass
+        else:
+            raise e
 
 
 def create_study_name(args: argparse.Namespace) -> str:
@@ -146,9 +158,11 @@ def analyze_convergence(study: optuna.Study, window_size: int = 20) -> Dict[str,
     if len(completed_trials) < window_size:
         return {
             "is_converged": False,
-            "reason": f"试验数量不足 ({len(completed_trials)} < {window_size})",
             "improvement_rate": 0.0,
+            "recent_best": 0.0,
+            "overall_best": 0.0,
             "trials_analyzed": len(completed_trials),
+            "reason": f"试验数量不足 ({len(completed_trials)} < {window_size})"
         }
 
     # 计算最近window_size个试验的改进情况
@@ -158,12 +172,11 @@ def analyze_convergence(study: optuna.Study, window_size: int = 20) -> Dict[str,
     if not recent_values:
         return {
             "is_converged": False,
-            "reason": "没有有效的试验值",
             "improvement_rate": 0.0,
             "recent_best": 0.0,
             "overall_best": 0.0,
             "trials_analyzed": len(completed_trials),
-            "reason": "最近试验没有有效值",
+            "reason": "最近试验没有有效值"
         }
 
     # 计算改进率
@@ -235,7 +248,7 @@ PARAM_CONFIG = {
     },
     "d_model": {
         "type": "categorical",
-        "choices": [64, 96, 128, 256],
+        "choices": [64, 96, 128],  # 移除256，避免内存问题
         "config_path": "model.CFM.d_model",
     },
     "cfm_num_heads": {
@@ -253,7 +266,7 @@ PARAM_CONFIG = {
     "cfm_num_layers": {
         "type": "int",
         "low": 2,
-        "high": 8,
+        "high": 6,  # 减少最大层数，避免内存问题
         "config_path": "model.CFM.num_layers",
     },
     "cfm_dropout": {
@@ -430,6 +443,13 @@ def validate_params(params: Dict[str, Any]) -> bool:
         return False
     if d_model < d_cf:
         return False
+    
+    # 内存使用估算（防止GPU内存溢出）
+    # 对于MSL数据集，限制较大的参数组合
+    if d_model >= 256 and seq_len >= 128:
+        return False
+    if d_model >= 128 and seq_len >= 128 and patch_size <= 8:
+        return False
 
     return True
 
@@ -484,7 +504,22 @@ def objective(
     except torch.cuda.OutOfMemoryError as e:
         print(f"💥 Trial {trial.number} GPU内存不足: {str(e)[:100]}...")
         clear_gpu_memory()
-        raise optuna.TrialPruned(f"GPU内存不足: {e}")
+        return 0.0  # 返回最低分数而不是剪枝，让Optuna学习避免此类参数
+
+    except RuntimeError as e:
+        if "CUDA error" in str(e):
+            print(f"💥 Trial {trial.number} CUDA错误: {str(e)[:100]}...")
+            # 尝试恢复CUDA状态
+            try:
+                torch.cuda.empty_cache()
+                torch.cuda.reset_peak_memory_stats()
+            except:
+                pass
+            return 0.0  # 返回最低分数
+        else:
+            print(f"❌ Trial {trial.number} 运行时错误: {e}")
+            clear_gpu_memory()
+            raise optuna.TrialPruned(f"运行时错误: {e}")
 
     except Exception as e:
         print(f"❌ Trial {trial.number} 执行失败: {e}")
