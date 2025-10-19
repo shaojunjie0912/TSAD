@@ -3,7 +3,7 @@ import tomllib
 from typing import Any, Dict
 
 import pandas as pd
-from swift.swift_pipeline import swift_find_anomalies, swift_score_anomalies
+from wgcf.wgcf_pipeline import wgcf_find_anomalies, wgcf_score_anomalies
 
 from ts_benchmark.tools.tools import plot_anomaly_labels, plot_anomaly_scores
 
@@ -23,7 +23,7 @@ def load_config(path: str) -> Dict[str, Any]:
 
 if __name__ == "__main__":
     # 加载配置文件
-    swift_config = load_config("configs/bsm1_dry/SWIFT/swift.toml")
+    wgcf_config = load_config("configs/bsm1_dry/WGCF/wgcf.toml")
     # 加载数据
     df = pd.read_csv("datasets/bsm1_dry/inputs.csv", index_col=0, parse_dates=[0])
 
@@ -33,23 +33,23 @@ if __name__ == "__main__":
         ["Ss", "Xi", "Xs"],
     ]
 
-    scores = swift_score_anomalies(data=data.values, config=swift_config)
+    scores = wgcf_score_anomalies(data=data.values, config=wgcf_config)
     plot_anomaly_scores(
         data=data,
         scores=scores,
         results_dir="results",
         dataset_name="bsm1_dry",
-        algorithm_name="SWIFT",
+        algorithm_name="WGCF",
     )
 
-    predictions = swift_find_anomalies(data=data.values, config=swift_config)
+    predictions = wgcf_find_anomalies(data=data.values, config=wgcf_config)
 
     plot_anomaly_labels(
         data=data,
         predictions=predictions,
         results_dir="results",
         dataset_name="bsm1_dry",
-        algorithm_name="SWIFT",
+        algorithm_name="WGCF",
     )
 
     print("----------------- 🆗 -----------------")

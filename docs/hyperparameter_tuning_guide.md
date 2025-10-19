@@ -1,6 +1,6 @@
-# SWIFT 超参数调优指南
+# WGCF 超参数调优指南
 
-本指南介绍如何使用 Optuna 进行 SWIFT 算法的超参数调优，包括可视化分析和收敛判断。
+本指南介绍如何使用 Optuna 进行 WGCF 算法的超参数调优，包括可视化分析和收敛判断。
 
 ## 目录
 
@@ -16,20 +16,20 @@
 
 ```bash
 # 异常评分任务
-.venv/bin/python ts_benchmark/tune_params_swift.py \
+.venv/bin/python ts_benchmark/tune_params_wgcf.py \
     --task-name score_anomalies \
     --dataset-name CalIt2 \
     --train-val-len 2520 \
-    --algorithm-name swift \
+    --algorithm-name wgcf \
     --anomaly-ratio 1.0 \
     --n-trials 50
 
 # 异常检测任务
-.venv/bin/python ts_benchmark/tune_params_swift.py \
+.venv/bin/python ts_benchmark/tune_params_wgcf.py \
     --task-name find_anomalies \
     --dataset-name PSM \
     --train-val-len 58317 \
-    --algorithm-name swift \
+    --algorithm-name wgcf \
     --anomaly-ratio 5.0 \
     --n-trials 100
 ```
@@ -39,7 +39,7 @@
 - `--task-name`: 任务类型 (`score_anomalies` 或 `find_anomalies`)
 - `--dataset-name`: 数据集名称
 - `--train-val-len`: 训练验证集总长度
-- `--algorithm-name`: 算法名称 (`swift`)
+- `--algorithm-name`: 算法名称 (`wgcf`)
 - `--anomaly-ratio`: 异常率百分比
 - `--n-trials`: Optuna 试验次数
 - `--restart`: 强制重新开始（删除已有进度）
@@ -58,8 +58,8 @@ pip install plotly
 
 ```bash
 .venv/bin/python ts_benchmark/visualize_optuna.py \
-    --study-db optuna_studies/score_anomalies_CalIt2_swift_ratio_1.0.db \
-    --study-name score_anomalies_CalIt2_swift_ratio_1.0
+    --study-db optuna_studies/score_anomalies_CalIt2_wgcf_ratio_1.0.db \
+    --study-name score_anomalies_CalIt2_wgcf_ratio_1.0
 ```
 
 ### 可视化图表类型
@@ -136,7 +136,7 @@ pip install plotly
 #   - MSL: 1.5 (中等数据集)  
 #   - CalIt2: 1.0 (小数据集)
 # 算法调整系数:
-#   - SWIFT: 1.5 (复杂算法)
+#   - WGCF: 1.5 (复杂算法)
 ```
 
 ### 实际建议
@@ -181,7 +181,7 @@ pip install plotly
 如果发现最优值在边界：
 
 ```python
-# 在 tune_params_swift.py 中调整 PARAM_CONFIG
+# 在 tune_params_wgcf.py 中调整 PARAM_CONFIG
 "learning_rate": {
     "low": 1e-5,    # 降低下界
     "high": 1e-1,   # 提高上界
@@ -231,7 +231,7 @@ pip install plotly
 bash scripts/tuning/example_with_visualization.sh
 
 # 2. 查看结果
-open optuna_visualizations/CalIt2/swift/optimization_history.html
+open optuna_visualizations/CalIt2/wgcf/optimization_history.html
 
 # 3. 根据收敛情况决定是否继续
 # 如果未收敛，增加试验次数继续调优

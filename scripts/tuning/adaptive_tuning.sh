@@ -1,13 +1,13 @@
 #!/bin/bash
 
-# 自适应 SWIFT 超参数调优脚本
+# 自适应 WGCF 超参数调优脚本
 # 根据收敛情况自动决定是否继续调优
 
 # 设置参数
 TASK_NAME="score_anomalies"
 DATASET_NAME="CalIt2"
 TRAIN_VAL_LEN=2520
-ALGORITHM_NAME="swift"
+ALGORITHM_NAME="wgcf"
 ANOMALY_RATIO=1.0
 
 # 构建study信息
@@ -18,7 +18,7 @@ STUDY_DB="optuna_studies/${STUDY_NAME}.db"
 STAGES=(50 100 150 200)
 CURRENT_STAGE=0
 
-echo "🚀 开始自适应SWIFT超参数调优"
+echo "🚀 开始自适应WGCF超参数调优"
 echo "📊 数据集: $DATASET_NAME | 异常率: $ANOMALY_RATIO%"
 
 for TRIALS in "${STAGES[@]}"; do
@@ -27,7 +27,7 @@ for TRIALS in "${STAGES[@]}"; do
     echo "🔄 阶段 $CURRENT_STAGE: 运行至 $TRIALS 个试验"
     
     # 运行调优
-    .venv/bin/python ts_benchmark/tune_params_swift.py \
+    .venv/bin/python ts_benchmark/tune_params_wgcf.py \
         --task-name $TASK_NAME \
         --dataset-name $DATASET_NAME \
         --train-val-len $TRAIN_VAL_LEN \

@@ -6,7 +6,7 @@ from typing import Any, Dict
 import numpy as np
 import pandas as pd
 import torch
-from baselines.swift.swift_pipeline import swift_score_anomalies
+from baselines.wgcf.wgcf_pipeline import wgcf_score_anomalies
 from sklearn.metrics import roc_auc_score
 
 
@@ -57,16 +57,16 @@ if __name__ == "__main__":
     set_seed(1037)
 
     # 加载配置文件
-    swift_config: Dict[Any, Any]
+    wgcf_config: Dict[Any, Any]
     with open(args.config, "rb") as f:
-        swift_config = tomllib.load(f)
+        wgcf_config = tomllib.load(f)
 
     df = pd.read_csv(args.dataset)
 
     data = df.iloc[:, :-1]
     labels = df.iloc[:, -1].to_numpy()
 
-    scores = swift_score_anomalies(all_data=data.values, config=swift_config)
+    scores = wgcf_score_anomalies(all_data=data.values, config=wgcf_config)
     print(auc_roc(labels, scores))
 
     print("----------------- ✅ -----------------")

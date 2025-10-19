@@ -1,20 +1,20 @@
 #!/bin/bash
 
-# 示例：SWIFT 超参数调优 + 可视化分析
+# 示例：WGCF 超参数调优 + 可视化分析
 
-echo "🚀 开始SWIFT超参数调优（包含可视化分析）"
+echo "🚀 开始WGCF超参数调优（包含可视化分析）"
 
 # 设置参数
 TASK_NAME="score_anomalies"
 DATASET_NAME="CalIt2"
 TRAIN_VAL_LEN=2520
-ALGORITHM_NAME="swift"
+ALGORITHM_NAME="wgcf"
 ANOMALY_RATIO=1.0
 N_TRIALS=50
 
 # 第一步：运行调优
 echo "📊 第一步：运行超参数调优"
-.venv/bin/python ts_benchmark/tune_params_swift.py \
+.venv/bin/python ts_benchmark/tune_params_wgcf.py \
     --task-name $TASK_NAME \
     --dataset-name $DATASET_NAME \
     --train-val-len $TRAIN_VAL_LEN \

@@ -1,8 +1,8 @@
-# SWIFT: 无监督多变量时间序列异常值检测框架
+# WGCF: Multiresolution Wavelet Patching and Graph-Guided Channel Fusion for Robust Multivariate Time-Series Anomaly Detection 基于多尺度小波变换和图引导通道融合的鲁棒多变量时间序列异常检测
 
 ## 概述
 
-SWIFT（**S**tationary **W**avelet-patched **I**nter-channel **F**usion **T**ransformer for Anomaly Detection）是一个先进的无监督多变量时间序列异常检测框架。该框架基于多尺度小波变换和图引导通道融合技术，实现了鲁棒的多变量时间序列异常检测。
+WGCF 是一个先进的无监督多变量时间序列异常检测框架。该框架基于多尺度小波变换和图引导通道融合技术，实现了鲁棒的多变量时间序列异常检测。
 
 ### 核心创新
 
@@ -16,7 +16,7 @@ SWIFT（**S**tationary **W**avelet-patched **I**nter-channel **F**usion **T**ran
 
 ## 整体架构
 
-SWIFT框架采用编码器-解码器结构，主要包含三个核心模块：
+WGCF框架采用编码器-解码器结构，主要包含三个核心模块：
 
 ```text
 输入时间序列 → 前向模块(FM) → 通道融合模块(CFM) → 时尺重构模块(TSRM) → 重构输出
@@ -77,7 +77,7 @@ class RevIN(nn.Module):
 
 ### 2. 通道融合模块（Channel Fusion Module, CFM）
 
-CFM是SWIFT框架的核心创新，通过图引导的注意力机制学习通道间的复杂关联：
+CFM是WGCF框架的核心创新，通过图引导的注意力机制学习通道间的复杂关联：
 
 #### 2.1 GAT通道掩码器（GATChannelMasker）
 
@@ -113,7 +113,7 @@ class GATChannelMasker(nn.Module):
 
 #### 2.3 通道相关性发掘损失（CCD Loss）
 
-CCD损失是SWIFT框架的关键创新，包含两个组成部分：
+CCD损失是WGCF框架的关键创新，包含两个组成部分：
 
 ```python
 class AdaptiveCCDLoss(nn.Module):
@@ -155,7 +155,7 @@ TSRM负责将融合后的特征重构回原始时间序列：
 
 ### 损失函数设计
 
-SWIFT采用多域联合损失训练：
+WGCF采用多域联合损失训练：
 
 ```python
 total_loss = time_rec_loss + λ_scale * scale_rec_loss + λ_ccd * ccd_loss
@@ -190,7 +190,7 @@ es_patience = 10      # 早停耐心值
 
 ### 异常评分计算
 
-SWIFT采用双域异常评分策略：
+WGCF采用双域异常评分策略：
 
 ```python
 # 时间域分数
@@ -205,7 +205,7 @@ final_score = time_score + λ_scale * scale_score
 
 ### 自适应阈值策略
 
-SWIFT设计了智能的自适应阈值计算：
+WGCF设计了智能的自适应阈值计算：
 
 1. **偏度分析**：根据验证集分数的偏度选择策略
 2. **高偏度情况**：使用鲁棒的尾部分析方法
@@ -227,7 +227,7 @@ def _calculate_threshold(self, val_scores):
 
 ### 分数聚合策略
 
-为处理滑窗重叠问题，SWIFT采用加权聚合：
+为处理滑窗重叠问题，WGCF采用加权聚合：
 
 ```python
 final_scores = α * mean_scores + (1-α) * max_scores
@@ -238,7 +238,7 @@ final_scores = α * mean_scores + (1-α) * max_scores
 
 ## 配置系统
 
-SWIFT采用TOML格式的层次化配置系统：
+WGCF采用TOML格式的层次化配置系统：
 
 ### 核心配置块
 
@@ -280,73 +280,6 @@ ccd_loss_lambda = 0.001    # CCD损失权重
 
 - **AUC-ROC**：ROC曲线下面积
 
-## 超参数优化
-
-SWIFT集成了基于Optuna的自动超参数优化：
-
-### 优化空间定义
-
-```python
-def objective(trial):
-    # 数据参数
-    seq_len = trial.suggest_categorical('seq_len', [64, 96, 128, 192, 256])
-    patch_size = trial.suggest_categorical('patch_size', [8, 12, 16, 20, 24])
-    
-    # 模型参数
-    level = trial.suggest_int('level', 2, 6)
-    num_layers = trial.suggest_int('num_layers', 2, 8)
-    d_cf = trial.suggest_categorical('d_cf', [32, 64, 128, 256])
-    
-    # 损失参数
-    scale_loss_lambda = trial.suggest_float('scale_loss_lambda', 0.1, 2.0)
-    ccd_loss_lambda = trial.suggest_float('ccd_loss_lambda', 0.0001, 0.01)
-```
-
-### 可视化分析
-
-框架提供丰富的优化过程可视化：
-
-- 优化历史图
-- 参数重要性分析
-- 参数关系图
-- 并行坐标图
-- 收敛分析图
-
-## 使用示例
-
-### 基本使用
-
-```python
-import numpy as np
-from swift_pipeline import SWIFTPipeline
-import tomli
-
-# 加载配置
-with open('configs/base/swift.toml', 'rb') as f:
-    config = tomli.load(f)
-
-# 创建pipeline
-pipeline = SWIFTPipeline(config)
-
-# 训练模型
-pipeline.fit(train_val_data)
-
-# 异常检测
-predictions, scores = pipeline.find_anomalies(test_data)
-```
-
-### 快捷函数
-
-```python
-from swift_pipeline import swift_find_anomalies, swift_score_anomalies
-
-# 直接异常检测
-predictions = swift_find_anomalies(all_data, config)
-
-# 直接异常评分
-scores = swift_score_anomalies(all_data, config)
-```
-
 ## 技术优势
 
 ### 1. 多尺度表示学习
@@ -378,25 +311,3 @@ scores = swift_score_anomalies(all_data, config)
 - 联合优化所有模块
 - CCD损失协同训练
 - 避免分阶段训练的次优解
-
-## 适用场景
-
-SWIFT框架特别适用于以下场景：
-
-1. **多传感器系统监控**：工业设备、智能建筑等
-2. **金融时间序列分析**：股票价格、交易量等多维数据
-3. **网络流量监控**：多节点、多指标的网络异常检测
-4. **医疗信号分析**：多导联心电图、脑电图等
-5. **环境监测**：气象站、污染监测等多参数数据
-
-## 性能特点
-
-- **无监督学习**：无需异常标签，适应性强
-- **实时检测**：支持流式数据处理
-- **可扩展性**：支持任意维度的多变量数据
-- **鲁棒性**：对噪声和缺失数据具有良好容错性
-- **可解释性**：提供通道重要性和注意力权重分析
-
-## 总结
-
-SWIFT框架通过创新的多尺度小波变换、图引导通道融合和双域重构学习，为无监督多变量时间序列异常检测提供了一个强大且灵活的解决方案。其独特的设计理念和技术创新使其在准确性、鲁棒性和可扩展性方面都表现出色，为时间序列异常检测领域带来了新的突破。

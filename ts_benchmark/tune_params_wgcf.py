@@ -12,11 +12,11 @@ import plotly.graph_objects as go
 import tomli
 import tomli_w
 import torch
-from baselines.swift.swift_pipeline import swift_find_anomalies, swift_score_anomalies
 from evaluation.metrics.anomaly_detection_metrics_label import affiliation_f
 from evaluation.metrics.anomaly_detection_metrics_score import auc_roc
 
 from tools.tools import set_seed
+from baselines.wgcf.wgcf_pipeline import wgcf_find_anomalies, wgcf_score_anomalies
 
 # TODO: 遇到 cuda out of memory, 那么此时的参数组合是否需要重试?
 
@@ -200,7 +200,7 @@ def get_n_trials_recommendation(dataset_name: str, algorithm_name: str) -> int:
 
     # 根据算法复杂度调整
     algorithm_multipliers = {
-        "swift": 1.5,  # 复杂算法，需要更多试验
+        "wgcf": 1.5,  # 复杂算法，需要更多试验
     }
 
     multiplier = dataset_multipliers.get(dataset_name, 1.0) * algorithm_multipliers.get(
@@ -469,11 +469,11 @@ def objective(
     try:
         if task_name == "find_anomalies":
             # 异常检测任务 - 使用 F1 分数
-            predictions = swift_find_anomalies(all_data=all_data, config=current_config)
+            predictions = wgcf_find_anomalies(all_data=all_data, config=current_config)
             result = affiliation_f(labels, predictions)
         elif task_name == "score_anomalies":
             # 异常评分任务 - 使用 AUC-ROC
-            scores = swift_score_anomalies(all_data=all_data, config=current_config)
+            scores = wgcf_score_anomalies(all_data=all_data, config=current_config)
             result = auc_roc(labels, scores)
         else:
             raise ValueError(f"不支持的任务类型: {task_name}")
@@ -694,7 +694,7 @@ def run_optimization(args: argparse.Namespace):
 
 # --------------------------- CLI ---------------------------
 if __name__ == "__main__":
-    cli_parser = argparse.ArgumentParser(description="SWIFT 超参数调优工具")
+    cli_parser = argparse.ArgumentParser(description="WGCF 超参数调优工具")
 
     # 基本参数
     cli_parser.add_argument("--task-name", type=str, required=True, help="任务名称")

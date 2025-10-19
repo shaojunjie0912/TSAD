@@ -1,9 +1,9 @@
 #!/bin/bash
 
-.venv/bin/python ts_benchmark/tune_params_swift.py \
+.venv/bin/python ts_benchmark/tune_params_wgcf.py \
     --task-name score_anomalies \
     --dataset-name MSL \
     --train-val-len 58317 \
-    --algorithm-name swift \
+    --algorithm-name wgcf \
     --anomaly-ratio 5.0 \
     --n-trials 100

@@ -8,11 +8,11 @@ import torch.nn as nn
 from torch.optim import lr_scheduler
 from tqdm import tqdm
 
-from .model.swift import SWIFT
+from .model.wgcf import WGCF
 from .utils.training import EarlyStopping, get_dataloader, split_data
 
 
-class SWIFTPipeline(nn.Module):
+class WGCFPipeline(nn.Module):
     def __init__(self, config: Dict[str, Any]):
         super().__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -106,7 +106,7 @@ class SWIFTPipeline(nn.Module):
         cfm_config = self.model_config["CFM"]
         tsrm_config = self.model_config["TSRM"]
 
-        self.model = SWIFT(
+        self.model = WGCF(
             # data config
             num_features=train_val_data.shape[1],
             seq_len=self.data_config["seq_len"],
@@ -395,11 +395,11 @@ class SWIFTPipeline(nn.Module):
         return predictions, test_scores
 
 
-def swift_score_anomalies(all_data: np.ndarray, config: Dict[str, Any]) -> np.ndarray:
+def wgcf_score_anomalies(all_data: np.ndarray, config: Dict[str, Any]) -> np.ndarray:
     """
     计算异常分数
     """
-    pipeline = SWIFTPipeline(config)
+    pipeline = WGCFPipeline(config)
     train_val_data, test_data = split_data(all_data, config["data"]["tain_val_len"])
     pipeline.fit(train_val_data)
     scores = pipeline.score_anomalies(test_data)
@@ -407,11 +407,11 @@ def swift_score_anomalies(all_data: np.ndarray, config: Dict[str, Any]) -> np.nd
     return scores
 
 
-def swift_find_anomalies(all_data: np.ndarray, config: Dict[str, Any]) -> np.ndarray:
+def wgcf_find_anomalies(all_data: np.ndarray, config: Dict[str, Any]) -> np.ndarray:
     """
     找到异常点
     """
-    pipeline = SWIFTPipeline(config)
+    pipeline = WGCFPipeline(config)
     train_val_data, test_data = split_data(all_data, config["data"]["tain_val_len"])
     pipeline.fit(train_val_data)
     predictions, _ = pipeline.find_anomalies(test_data)
