@@ -19,3 +19,6 @@ dependencies = [
     "tomli-w>=1.2.0",
     "torch==2.5.0",
 ]
+
+[tool.ruff]
+line-length = 100
